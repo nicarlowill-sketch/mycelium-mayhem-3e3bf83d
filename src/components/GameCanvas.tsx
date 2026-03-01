@@ -1,5 +1,5 @@
 import { useRef, useEffect, useCallback } from 'react';
-import { createGame, update, startGame } from '@/game/engine';
+import { createGame, update, startGame, toggleWeapon } from '@/game/engine';
 import { render } from '@/game/renderer';
 import { GameData } from '@/game/types';
 
@@ -31,9 +31,12 @@ const GameCanvas = () => {
     const g = createGame(canvas.width, canvas.height);
     gameRef.current = g;
 
-    // Input handlers
     const onKeyDown = (e: KeyboardEvent) => {
-      g.keys[e.key.toLowerCase()] = true;
+      const key = e.key.toLowerCase();
+      g.keys[key] = true;
+      if (key === 'q') {
+        toggleWeapon(g);
+      }
       e.preventDefault();
     };
     const onKeyUp = (e: KeyboardEvent) => {

@@ -3,6 +3,8 @@ export interface Vec2 {
   y: number;
 }
 
+export type AnimState = 'idle' | 'walk' | 'attack' | 'damage' | 'death';
+
 export interface Player {
   pos: Vec2;
   vel: Vec2;
@@ -13,7 +15,16 @@ export interface Player {
   alive: boolean;
   deathTimer: number;
   flashTimer: number;
+  purpleFlashTimer: number;
+  animState: AnimState;
+  animFrame: number;
+  animTick: number;
+  attackTimer: number;
+  fireGemCollected: boolean;
+  activeWeapon: 'shadow' | 'fire';
 }
+
+export type EnemyType = 'rusher' | 'sniper';
 
 export interface Enemy {
   pos: Vec2;
@@ -23,12 +34,19 @@ export interface Enemy {
   flashTimer: number;
   wobblePhase: number;
   speed: number;
+  type: EnemyType;
+  shootTimer: number;
+  spawnFlash: number;
+  animFrame: number;
+  animTick: number;
 }
 
 export interface Projectile {
   pos: Vec2;
   vel: Vec2;
   alive: boolean;
+  type: 'shadow' | 'fire' | 'enemy';
+  damage: number;
 }
 
 export interface Particle {
@@ -47,6 +65,18 @@ export interface SporeParticle {
   size: number;
 }
 
+export interface FogPatch {
+  pos: Vec2;
+  vel: Vec2;
+  radius: number;
+}
+
+export interface GemPickup {
+  pos: Vec2;
+  pulse: number;
+  collected: boolean;
+}
+
 export type GameState = 'start' | 'playing' | 'waveClear' | 'gameOver';
 
 export interface GameData {
@@ -56,8 +86,12 @@ export interface GameData {
   projectiles: Projectile[];
   particles: Particle[];
   spores: SporeParticle[];
+  fogPatches: FogPatch[];
+  gemPickup: GemPickup | null;
+  gemNotifyTimer: number;
   wave: number;
   score: number;
+  wavesCleared: number;
   lastShotTime: number;
   waveClearTimer: number;
   screenShake: Vec2;

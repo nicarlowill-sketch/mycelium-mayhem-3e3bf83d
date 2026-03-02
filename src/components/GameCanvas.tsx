@@ -1,7 +1,8 @@
 import { useRef, useEffect, useCallback } from 'react';
-import { createGame, update, startGame, toggleWeapon } from '@/game/engine';
+import { createGame, update, startGame, setWeapon } from '@/game/engine';
 import { render } from '@/game/renderer';
-import { GameData } from '@/game/types';
+import { resumeAudio, playSoundEvent } from '@/game/audio';
+import { GameData, WeaponType } from '@/game/types';
 
 const GameCanvas = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -31,11 +32,18 @@ const GameCanvas = () => {
     const g = createGame(canvas.width, canvas.height);
     gameRef.current = g;
 
+    const weaponKeys: Record<string, WeaponType> = {
+      q: 'fire',
+      e: 'frost',
+      r: 'storm',
+      t: 'venom',
+    };
+
     const onKeyDown = (e: KeyboardEvent) => {
       const key = e.key.toLowerCase();
       g.keys[key] = true;
-      if (key === 'q') {
-        toggleWeapon(g);
+      if (weaponKeys[key]) {
+        setWeapon(g, weaponKeys[key]);
       }
       e.preventDefault();
     };
@@ -49,6 +57,7 @@ const GameCanvas = () => {
     const onMouseDown = (e: MouseEvent) => {
       if (e.button !== 0) return;
       g.mouseDown = true;
+      resumeAudio();
       if (g.state === 'start' || g.state === 'gameOver') {
         startGame(g);
       }
@@ -68,6 +77,10 @@ const GameCanvas = () => {
     const loop = () => {
       if (!running) return;
       update(g, performance.now());
+      // Process sound events
+      for (const evt of g.soundEvents) {
+        playSoundEvent(evt);
+      }
       render(ctx, g);
       requestAnimationFrame(loop);
     };

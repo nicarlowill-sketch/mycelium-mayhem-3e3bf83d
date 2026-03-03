@@ -1,10 +1,9 @@
-import { GameData, Enemy, Player, WeaponType } from './types';
+import { GameData, Enemy, Player, WeaponType, Projectile } from './types';
 
 export function render(ctx: CanvasRenderingContext2D, g: GameData) {
   ctx.save();
   ctx.translate(g.screenShake.x, g.screenShake.y);
 
-  // Clear
   ctx.fillStyle = '#0d0d14';
   ctx.fillRect(0, 0, g.width, g.height);
 
@@ -24,10 +23,9 @@ export function render(ctx: CanvasRenderingContext2D, g: GameData) {
   ctx.save();
   ctx.translate(-g.camera.x, -g.camera.y);
 
-  // Draw arena
   renderArena(ctx, g);
 
-  // Fog patches (atmosphere)
+  // Fog patches
   for (const f of g.fogPatches) {
     const grad = ctx.createRadialGradient(f.pos.x, f.pos.y, 0, f.pos.x, f.pos.y, f.radius);
     grad.addColorStop(0, 'rgba(40,0,80,0.06)');
@@ -44,7 +42,7 @@ export function render(ctx: CanvasRenderingContext2D, g: GameData) {
   }
   ctx.globalAlpha = 1;
 
-  // Fog zones (enemy-created)
+  // Fog zones
   for (const fz of g.fogZones) {
     const alpha = Math.min(0.3, (fz.life / fz.maxLife) * 0.3);
     const grad = ctx.createRadialGradient(fz.pos.x, fz.pos.y, 0, fz.pos.x, fz.pos.y, fz.radius);
@@ -57,7 +55,7 @@ export function render(ctx: CanvasRenderingContext2D, g: GameData) {
 
   // Toxic puddles
   for (const tp of g.toxicPuddles) {
-    const alpha = tp.life / 90;
+    const alpha = tp.life / 120;
     ctx.globalAlpha = alpha * 0.4;
     ctx.fillStyle = '#44ff44';
     ctx.beginPath();
@@ -67,9 +65,7 @@ export function render(ctx: CanvasRenderingContext2D, g: GameData) {
   }
 
   // Obstacles
-  for (const obs of g.obstacles) {
-    drawObstacle(ctx, obs);
-  }
+  for (const obs of g.obstacles) drawObstacle(ctx, obs);
 
   // Particles (behind entities)
   for (const pt of g.particles) {
@@ -86,9 +82,7 @@ export function render(ctx: CanvasRenderingContext2D, g: GameData) {
   }
 
   // Projectiles
-  for (const proj of g.projectiles) {
-    drawProjectile(ctx, proj);
-  }
+  for (const proj of g.projectiles) drawProjectile(ctx, proj);
 
   // Enemies
   for (const e of g.enemies) {
@@ -101,23 +95,56 @@ export function render(ctx: CanvasRenderingContext2D, g: GameData) {
       ctx.globalAlpha = 1;
     }
     drawEnemy(ctx, e);
+    
+    // Evolution warning icon
+    if (e.evolutionWarning && !e.evolved && !e.evolving) {
+      const blink = Math.sin(Date.now() * 0.01) > 0;
+      if (blink) {
+        ctx.fillStyle = '#ffaa00';
+        ctx.font = '10px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('▲', Math.floor(e.pos.x), Math.floor(e.pos.y) - 18);
+      }
+    }
+    
+    // Evolving flash
+    if (e.evolving) {
+      ctx.globalAlpha = 0.5;
+      ctx.fillStyle = '#ffaa00';
+      ctx.beginPath();
+      ctx.arc(Math.floor(e.pos.x), Math.floor(e.pos.y), 16, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
   }
 
   // Player
   const p = g.player;
   if (p.alive) {
     const visible = p.invincibleTimer <= 0 || Math.floor(p.invincibleTimer / 3) % 2 === 0;
-    if (visible) {
-      drawPlayer(ctx, p);
-    }
+    if (visible) drawPlayer(ctx, p);
   }
 
-  ctx.restore(); // End camera transform
+  // Combo popups (world space)
+  for (const cp of g.comboPopups) {
+    const alpha = cp.life / cp.maxLife;
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = cp.color;
+    ctx.font = '900 16px Cinzel, serif';
+    ctx.textAlign = 'center';
+    ctx.shadowColor = cp.color;
+    ctx.shadowBlur = 8;
+    ctx.fillText(cp.text, Math.floor(cp.pos.x), Math.floor(cp.pos.y));
+    ctx.shadowBlur = 0;
+    ctx.globalAlpha = 1;
+  }
 
-  // HUD (screen space)
+  ctx.restore(); // End camera
+
+  // HUD
   renderHUD(ctx, g);
 
-  // Wave announce text
+  // Wave announce
   if (g.waveAnnounceTimer > 0) {
     const alpha = Math.min(1, g.waveAnnounceTimer / 30);
     ctx.globalAlpha = alpha;
@@ -151,8 +178,13 @@ export function render(ctx: CanvasRenderingContext2D, g: GameData) {
     ctx.fillRect(0, 0, g.width, g.height);
   }
 
+  // Gem unlock presentation
+  if (g.state === 'gemUnlock' && g.gemUnlockType) {
+    renderGemUnlock(ctx, g);
+  }
+
   // Gem notification
-  if (g.gemNotifyTimer > 0) {
+  if (g.gemNotifyTimer > 0 && g.state !== 'gemUnlock') {
     const alpha = Math.min(1, g.gemNotifyTimer / 30);
     ctx.globalAlpha = alpha;
     ctx.fillStyle = '#ffd700';
@@ -162,6 +194,14 @@ export function render(ctx: CanvasRenderingContext2D, g: GameData) {
     ctx.shadowBlur = 20;
     ctx.fillText(g.gemNotifyText, g.width / 2, g.height / 2 + 60);
     ctx.shadowBlur = 0;
+    ctx.globalAlpha = 1;
+  }
+
+  // Screen flash
+  if (g.screenFlashTimer > 0) {
+    ctx.globalAlpha = g.screenFlashTimer / 8;
+    ctx.fillStyle = g.screenFlashColor;
+    ctx.fillRect(0, 0, g.width, g.height);
     ctx.globalAlpha = 1;
   }
 
@@ -175,7 +215,7 @@ export function render(ctx: CanvasRenderingContext2D, g: GameData) {
     ctx.fillRect(0, 0, g.width, g.height);
   }
 
-  // Screen edge vignette
+  // Vignette
   const vigGrad = ctx.createRadialGradient(g.width / 2, g.height / 2, g.width * 0.35, g.width / 2, g.height / 2, g.width * 0.7);
   vigGrad.addColorStop(0, 'rgba(0,0,0,0)');
   vigGrad.addColorStop(1, 'rgba(0,0,0,0.3)');
@@ -185,28 +225,71 @@ export function render(ctx: CanvasRenderingContext2D, g: GameData) {
   ctx.restore();
 }
 
+function renderGemUnlock(ctx: CanvasRenderingContext2D, g: GameData) {
+  const gt = g.gemUnlockType!;
+  const colorMap: Record<WeaponType, string> = {
+    shadow: '#9b30ff', fire: '#ff5500', frost: '#88ddff', storm: '#ffdd00', venom: '#44ff44',
+  };
+  const nameMap: Record<WeaponType, string> = {
+    shadow: 'SHADOW', fire: 'EMBER', frost: 'FROST', storm: 'STORM', venom: 'VENOM',
+  };
+  const keyMap: Record<WeaponType, string> = {
+    shadow: 'Click', fire: 'Q', frost: 'E', storm: 'R', venom: 'T',
+  };
+  const color = colorMap[gt];
+  const progress = 1 - g.gemUnlockTimer / 120;
+
+  // Darken
+  ctx.fillStyle = 'rgba(0,0,0,0.6)';
+  ctx.fillRect(0, 0, g.width, g.height);
+
+  // Rising gem
+  const gemY = g.height / 2 - 20 + (1 - progress) * 40;
+  const scale = 2 + progress;
+  ctx.save();
+  ctx.translate(g.width / 2, gemY);
+  ctx.scale(scale, scale);
+  ctx.shadowColor = color;
+  ctx.shadowBlur = 30;
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.moveTo(0, -6); ctx.lineTo(5, 0); ctx.lineTo(0, 6); ctx.lineTo(-5, 0);
+  ctx.closePath();
+  ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.restore();
+
+  // Text
+  ctx.fillStyle = color;
+  ctx.font = '900 42px Cinzel, serif';
+  ctx.textAlign = 'center';
+  ctx.shadowColor = color;
+  ctx.shadowBlur = 20;
+  ctx.fillText(`${nameMap[gt]} GEM ACQUIRED`, g.width / 2, g.height / 2 + 50);
+  ctx.shadowBlur = 0;
+
+  ctx.fillStyle = 'rgba(255,255,255,0.6)';
+  ctx.font = '18px monospace';
+  ctx.fillText(`Press ${keyMap[gt]} to equip`, g.width / 2, g.height / 2 + 80);
+}
+
 function renderArena(ctx: CanvasRenderingContext2D, g: GameData) {
-  // Floor tiles
   ctx.fillStyle = '#141420';
   ctx.fillRect(0, 0, g.arenaWidth, g.arenaHeight);
 
-  // Corridors (darker areas)
   ctx.fillStyle = '#0d0d18';
-  ctx.fillRect(0, 0, g.arenaWidth, 150); // North
-  ctx.fillRect(0, g.arenaHeight - 150, g.arenaWidth, 150); // South
+  ctx.fillRect(0, 0, g.arenaWidth, 150);
+  ctx.fillRect(0, g.arenaHeight - 150, g.arenaWidth, 150);
 
-  // Grid lines
   ctx.strokeStyle = '#111120';
   ctx.lineWidth = 1;
-  const gridSize = 32;
-  for (let x = 0; x < g.arenaWidth; x += gridSize) {
+  for (let x = 0; x < g.arenaWidth; x += 32) {
     ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, g.arenaHeight); ctx.stroke();
   }
-  for (let y = 0; y < g.arenaHeight; y += gridSize) {
+  for (let y = 0; y < g.arenaHeight; y += 32) {
     ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(g.arenaWidth, y); ctx.stroke();
   }
 
-  // Floor details (decorative cracks)
   ctx.strokeStyle = 'rgba(30,30,50,0.3)';
   ctx.lineWidth = 1;
   const crackPositions = [[150, 300], [500, 500], [900, 250], [700, 650], [300, 600]];
@@ -218,7 +301,6 @@ function renderArena(ctx: CanvasRenderingContext2D, g: GameData) {
     ctx.stroke();
   }
 
-  // Border
   const bw = g.borderSize;
   ctx.strokeStyle = '#3a0066';
   ctx.lineWidth = bw;
@@ -227,7 +309,6 @@ function renderArena(ctx: CanvasRenderingContext2D, g: GameData) {
   ctx.strokeRect(bw / 2, bw / 2, g.arenaWidth - bw, g.arenaHeight - bw);
   ctx.shadowBlur = 0;
 
-  // Corner pillars
   const corners: [number, number][] = [
     [bw, bw], [g.arenaWidth - bw - 8, bw],
     [bw, g.arenaHeight - bw - 8], [g.arenaWidth - bw - 8, g.arenaHeight - bw - 8],
@@ -249,7 +330,6 @@ function drawObstacle(ctx: CanvasRenderingContext2D, obs: import('./types').Obst
     ctx.fillStyle = '#252540';
     ctx.fillRect(pos.x + 2, pos.y + 2, width - 4, 4);
     ctx.fillRect(pos.x + 2, pos.y + height - 6, width - 4, 4);
-    // Purple moss glow at base
     ctx.fillStyle = 'rgba(100,0,200,0.15)';
     ctx.fillRect(pos.x - 2, pos.y + height - 2, width + 4, 4);
     ctx.shadowColor = '#6600bb';
@@ -264,35 +344,186 @@ function drawObstacle(ctx: CanvasRenderingContext2D, obs: import('./types').Obst
   }
 }
 
-function drawProjectile(ctx: CanvasRenderingContext2D, proj: import('./types').Projectile) {
+function drawProjectile(ctx: CanvasRenderingContext2D, proj: Projectile) {
   const px = Math.floor(proj.pos.x);
   const py = Math.floor(proj.pos.y);
 
-  const config: Record<string, { color: string; glow: string; size: number }> = {
-    shadow: { color: '#9b30ff', glow: '#9b30ff', size: 4 },
-    fire: { color: '#ff5500', glow: '#ffaa00', size: 5 },
-    frost: { color: '#88ddff', glow: '#88ddff', size: 4 },
-    storm: { color: '#ffdd00', glow: '#ffdd00', size: 4 },
-    venom: { color: '#44ff44', glow: '#44ff44', size: 4 },
-    enemy: { color: '#00ff44', glow: '#00ff44', size: 3.5 },
-  };
-
-  const c = config[proj.type] || config.enemy;
-  ctx.fillStyle = c.color;
-  ctx.shadowColor = c.glow;
-  ctx.shadowBlur = 8;
-  ctx.beginPath();
-  ctx.arc(px, py, c.size, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.shadowBlur = 0;
+  if (proj.type === 'shadow') {
+    // Perfect circle orb with orbiting particles
+    ctx.fillStyle = '#6600bb';
+    ctx.shadowColor = '#aa44ff';
+    ctx.shadowBlur = 10;
+    ctx.beginPath();
+    ctx.arc(px, py, 4, 0, Math.PI * 2);
+    ctx.fill();
+    // Outer glow ring
+    ctx.strokeStyle = '#aa44ff';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(px, py, 6, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+  } else if (proj.type === 'fire') {
+    // Teardrop flame shape
+    ctx.save();
+    const angle = Math.atan2(proj.vel.y, proj.vel.x);
+    ctx.translate(px, py);
+    ctx.rotate(angle);
+    // Flickering edges
+    const flicker1 = (Math.random() - 0.5) * 2;
+    const flicker2 = (Math.random() - 0.5) * 2;
+    ctx.fillStyle = '#ffaa00';
+    ctx.shadowColor = '#ff4400';
+    ctx.shadowBlur = 8;
+    ctx.beginPath();
+    ctx.moveTo(5, 0); // pointed front
+    ctx.quadraticCurveTo(0, -4 + flicker1, -5, -2 + flicker2);
+    ctx.quadraticCurveTo(-6, 0, -5, 2 - flicker2);
+    ctx.quadraticCurveTo(0, 4 - flicker1, 5, 0);
+    ctx.fill();
+    // Inner core
+    ctx.fillStyle = '#ff4400';
+    ctx.beginPath();
+    ctx.moveTo(3, 0);
+    ctx.quadraticCurveTo(0, -2, -3, 0);
+    ctx.quadraticCurveTo(0, 2, 3, 0);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.restore();
+  } else if (proj.type === 'frost') {
+    // Diamond/rhombus crystal shape
+    ctx.fillStyle = '#ffffff';
+    ctx.shadowColor = '#aaeeff';
+    ctx.shadowBlur = 6;
+    ctx.beginPath();
+    ctx.moveTo(px, py - 4);
+    ctx.lineTo(px + 6, py);
+    ctx.lineTo(px, py + 4);
+    ctx.lineTo(px - 6, py);
+    ctx.closePath();
+    ctx.fill();
+    // Inner crystal
+    ctx.fillStyle = '#aaeeff';
+    ctx.beginPath();
+    ctx.moveTo(px, py - 2);
+    ctx.lineTo(px + 3, py);
+    ctx.lineTo(px, py + 2);
+    ctx.lineTo(px - 3, py);
+    ctx.closePath();
+    ctx.fill();
+    ctx.shadowBlur = 0;
+  } else if (proj.type === 'storm') {
+    // Zigzag bolt line
+    const angle = Math.atan2(proj.vel.y, proj.vel.x);
+    ctx.save();
+    ctx.translate(px, py);
+    ctx.rotate(angle);
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 3;
+    ctx.shadowColor = '#ffee00';
+    ctx.shadowBlur = 10;
+    ctx.beginPath();
+    ctx.moveTo(-7, 0);
+    ctx.lineTo(-3, -3);
+    ctx.lineTo(1, 2);
+    ctx.lineTo(5, -2);
+    ctx.lineTo(7, 0);
+    ctx.stroke();
+    // Yellow overlay
+    ctx.strokeStyle = '#ffee00';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(-7, 0);
+    ctx.lineTo(-3, -3);
+    ctx.lineTo(1, 2);
+    ctx.lineTo(5, -2);
+    ctx.lineTo(7, 0);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    ctx.restore();
+  } else if (proj.type === 'venom') {
+    // Wobbly bubble that grows
+    const wobbleR = proj.growSize / 2;
+    ctx.fillStyle = '#00aa00';
+    ctx.globalAlpha = 0.7;
+    ctx.shadowColor = '#44ff44';
+    ctx.shadowBlur = 6;
+    ctx.beginPath();
+    // Wobbly circle
+    const segments = 8;
+    for (let i = 0; i <= segments; i++) {
+      const a = (i / segments) * Math.PI * 2;
+      const r = wobbleR + (Math.random() - 0.5) * 2;
+      const wx = px + Math.cos(a) * r;
+      const wy = py + Math.sin(a) * r;
+      if (i === 0) ctx.moveTo(wx, wy);
+      else ctx.lineTo(wx, wy);
+    }
+    ctx.closePath();
+    ctx.fill();
+    // Inner
+    ctx.fillStyle = '#44ff44';
+    ctx.globalAlpha = 0.5;
+    ctx.beginPath();
+    ctx.arc(px, py, wobbleR * 0.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.shadowBlur = 0;
+  } else {
+    // Enemy projectile
+    ctx.fillStyle = '#00ff44';
+    ctx.shadowColor = '#00ff44';
+    ctx.shadowBlur = 8;
+    ctx.beginPath();
+    ctx.arc(px, py, 3.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+  }
 }
 
 function drawEnemy(ctx: CanvasRenderingContext2D, e: Enemy) {
-  if (e.type === 'rusher') drawRusher(ctx, e);
-  else if (e.type === 'sniper') drawSniper(ctx, e);
-  else if (e.type === 'titan') drawTitan(ctx, e);
-  else if (e.type === 'fogWeaver') drawFogWeaver(ctx, e);
-  else if (e.type === 'boss') drawBoss(ctx, e);
+  if (e.type === 'rusher') {
+    if (e.evolved) drawEvolvedRusher(ctx, e);
+    else drawRusher(ctx, e);
+  } else if (e.type === 'sniper') {
+    if (e.evolved) drawEvolvedSniper(ctx, e);
+    else drawSniper(ctx, e);
+  } else if (e.type === 'titan') drawTitan(ctx, e);
+  else if (e.type === 'fogWeaver') {
+    if (e.evolved) drawEvolvedFogWeaver(ctx, e);
+    else drawFogWeaver(ctx, e);
+  } else if (e.type === 'boss') drawBoss(ctx, e);
+}
+
+function drawStatusEffects(ctx: CanvasRenderingContext2D, e: Enemy, px: number, py: number) {
+  // Dark flame visual
+  if (e.darkFlame) {
+    ctx.globalAlpha = 0.6;
+    ctx.fillStyle = '#331100';
+    ctx.fillRect(px - 6, py - 10, 3, 5);
+    ctx.fillStyle = '#ff5500';
+    ctx.fillRect(px + 3, py - 9, 3, 4);
+    ctx.globalAlpha = 1;
+  }
+  // Frozen toxin shell
+  if (e.frozenToxin) {
+    ctx.globalAlpha = 0.4;
+    ctx.strokeStyle = '#226666';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(px - 10, py - 10, 20, 20);
+    ctx.globalAlpha = 1;
+  }
+  // Poison tint
+  if (e.poison && !e.frozenToxin) {
+    ctx.globalAlpha = 0.8;
+  }
+  // Slow ice crystal
+  if (e.slow && !e.frozenToxin) {
+    ctx.fillStyle = '#88ddff';
+    ctx.globalAlpha = 0.4;
+    ctx.fillRect(px - 3, py - 12, 6, 4);
+    ctx.globalAlpha = 1;
+  }
 }
 
 function drawRusher(ctx: CanvasRenderingContext2D, e: Enemy) {
@@ -300,15 +531,7 @@ function drawRusher(ctx: CanvasRenderingContext2D, e: Enemy) {
   const px = Math.floor(e.pos.x);
   const py = Math.floor(e.pos.y + wobbleOffset);
   if (e.flashTimer > 0) { ctx.fillStyle = '#ffffff'; ctx.fillRect(px - 8, py - 8, 16, 16); return; }
-  // Poison tint
-  if (e.poison) { ctx.globalAlpha = 0.8; }
-  // Slow ice crystal
-  if (e.slow) {
-    ctx.fillStyle = '#88ddff';
-    ctx.globalAlpha = 0.4;
-    ctx.fillRect(px - 3, py - 12, 6, 4);
-    ctx.globalAlpha = 1;
-  }
+  drawStatusEffects(ctx, e, px, py);
   const legOffset = Math.sin(e.animFrame * Math.PI / 2) * 2;
   ctx.fillStyle = '#5c3d2e';
   ctx.fillRect(px - 4, py + 4, 3, 4 + legOffset);
@@ -331,13 +554,48 @@ function drawRusher(ctx: CanvasRenderingContext2D, e: Enemy) {
   ctx.globalAlpha = 1;
 }
 
+function drawEvolvedRusher(ctx: CanvasRenderingContext2D, e: Enemy) {
+  // Spine Rusher - larger, dark crimson-black with spines
+  const wobbleOffset = Math.sin(e.wobblePhase) * 2;
+  const px = Math.floor(e.pos.x);
+  const py = Math.floor(e.pos.y + wobbleOffset);
+  if (e.flashTimer > 0) { ctx.fillStyle = '#ffffff'; ctx.fillRect(px - 10, py - 10, 20, 20); return; }
+  drawStatusEffects(ctx, e, px, py);
+  const legOffset = Math.sin(e.animFrame * Math.PI / 2) * 2;
+  // Larger legs
+  ctx.fillStyle = '#3a1a10';
+  ctx.fillRect(px - 5, py + 5, 4, 5 + legOffset);
+  ctx.fillRect(px + 1, py + 5, 4, 5 - legOffset);
+  // Body
+  ctx.fillStyle = '#3a1a10';
+  ctx.fillRect(px - 4, py, 8, 7);
+  // Cap - dark crimson-black
+  ctx.fillStyle = '#330000';
+  ctx.fillRect(px - 10, py - 10, 20, 12);
+  ctx.fillStyle = '#440000';
+  ctx.fillRect(px - 8, py - 10, 16, 4);
+  // Spines
+  ctx.fillStyle = '#220000';
+  ctx.fillRect(px - 10, py - 14, 2, 4);
+  ctx.fillRect(px - 4, py - 13, 2, 3);
+  ctx.fillRect(px + 2, py - 14, 2, 4);
+  ctx.fillRect(px + 8, py - 13, 2, 3);
+  // Brighter eyes
+  ctx.fillStyle = '#ff0000';
+  ctx.shadowColor = '#ff0000';
+  ctx.shadowBlur = 6;
+  ctx.fillRect(px - 5, py - 2, 4, 3);
+  ctx.fillRect(px + 1, py - 2, 4, 3);
+  ctx.shadowBlur = 0;
+  ctx.globalAlpha = 1;
+}
+
 function drawSniper(ctx: CanvasRenderingContext2D, e: Enemy) {
   const px = Math.floor(e.pos.x);
   const py = Math.floor(e.pos.y);
   const bob = Math.sin(e.wobblePhase * 0.7) * 1.5;
   if (e.flashTimer > 0) { ctx.fillStyle = '#ffffff'; ctx.fillRect(px - 9, py - 9, 18, 18); return; }
-  if (e.poison) ctx.globalAlpha = 0.8;
-  if (e.slow) { ctx.fillStyle = '#88ddff'; ctx.globalAlpha = 0.4; ctx.fillRect(px - 3, py - 14, 6, 4); ctx.globalAlpha = 1; }
+  drawStatusEffects(ctx, e, px, py);
   ctx.fillStyle = '#3d2e5c';
   ctx.fillRect(px - 3, py + 2, 6, 8);
   ctx.fillStyle = '#2a0055';
@@ -355,31 +613,55 @@ function drawSniper(ctx: CanvasRenderingContext2D, e: Enemy) {
   ctx.globalAlpha = 1;
 }
 
+function drawEvolvedSniper(ctx: CanvasRenderingContext2D, e: Enemy) {
+  // Void Sniper - taller, dark purple-black, white eyes
+  const px = Math.floor(e.pos.x);
+  const py = Math.floor(e.pos.y);
+  const bob = Math.sin(e.wobblePhase * 0.7) * 1.5;
+  if (e.flashTimer > 0) { ctx.fillStyle = '#ffffff'; ctx.fillRect(px - 10, py - 12, 20, 24); return; }
+  drawStatusEffects(ctx, e, px, py);
+  // Tendrils
+  ctx.fillStyle = '#220044';
+  ctx.fillRect(px - 6, py + 6, 1, 6);
+  ctx.fillRect(px + 5, py + 6, 1, 6);
+  ctx.fillRect(px - 8, py + 4, 1, 5);
+  ctx.fillRect(px + 7, py + 4, 1, 5);
+  // Body
+  ctx.fillStyle = '#1a0033';
+  ctx.fillRect(px - 4, py + 2, 8, 10);
+  // Cap - dark purple-black
+  ctx.fillStyle = '#110022';
+  ctx.fillRect(px - 10, py - 12 + bob, 20, 16);
+  ctx.fillStyle = '#220044';
+  ctx.fillRect(px - 8, py - 12 + bob, 16, 5);
+  // White eyes
+  ctx.fillStyle = '#ffffff';
+  ctx.shadowColor = '#ffffff';
+  ctx.shadowBlur = 6;
+  ctx.fillRect(px - 4, py - 1, 3, 3);
+  ctx.fillRect(px + 1, py - 1, 3, 3);
+  ctx.shadowBlur = 0;
+  ctx.globalAlpha = 1;
+}
+
 function drawTitan(ctx: CanvasRenderingContext2D, e: Enemy) {
   const px = Math.floor(e.pos.x);
   const py = Math.floor(e.pos.y);
   const lurch = Math.sin(e.wobblePhase * 0.3) * 1;
   if (e.flashTimer > 0) { ctx.fillStyle = '#ffffff'; ctx.fillRect(px - 14, py - 14, 28, 28); return; }
-  if (e.poison) ctx.globalAlpha = 0.8;
-
-  // Thick body
+  drawStatusEffects(ctx, e, px, py);
   ctx.fillStyle = '#2a1a0a';
   ctx.fillRect(px - 8, py + 2, 16, 12);
-  // Legs
   const legOff = Math.sin(e.animFrame * Math.PI / 2) * 1.5;
   ctx.fillStyle = '#1a0f05';
   ctx.fillRect(px - 7, py + 12, 5, 5 + legOff);
   ctx.fillRect(px + 2, py + 12, 5, 5 - legOff);
-
-  // Cap - layered segments
   ctx.fillStyle = '#1a0f05';
   ctx.fillRect(px - 14, py - 14 + lurch, 28, 18);
   ctx.fillStyle = '#2a1a0a';
   ctx.fillRect(px - 12, py - 14 + lurch, 24, 5);
   ctx.fillStyle = '#332200';
   ctx.fillRect(px - 10, py - 10 + lurch, 20, 4);
-
-  // Orange eyes
   ctx.fillStyle = '#ff6600';
   ctx.shadowColor = '#ff6600';
   ctx.shadowBlur = 6;
@@ -394,29 +676,48 @@ function drawFogWeaver(ctx: CanvasRenderingContext2D, e: Enemy) {
   const py = Math.floor(e.pos.y);
   const drift = Math.sin(e.wobblePhase * 0.5) * 2;
   if (e.flashTimer > 0) { ctx.fillStyle = '#ffffff'; ctx.fillRect(px - 8, py - 8, 16, 16); return; }
-
   ctx.globalAlpha = 0.7;
-  // Tendrils
   ctx.fillStyle = '#334444';
   ctx.fillRect(px - 2, py + 6, 1, 6 + drift);
   ctx.fillRect(px + 1, py + 6, 1, 5 - drift);
   ctx.fillRect(px - 4, py + 5, 1, 4);
   ctx.fillRect(px + 3, py + 5, 1, 4);
-
-  // Body
   ctx.fillStyle = '#2a3a3a';
   ctx.fillRect(px - 4, py - 2, 8, 8);
-
-  // Cap
   ctx.fillStyle = '#1a3030';
   ctx.fillRect(px - 8, py - 8 + drift, 16, 8);
   ctx.fillStyle = '#2a4040';
   ctx.fillRect(px - 6, py - 8 + drift, 12, 3);
-
-  // White ghostly eyes
   ctx.fillStyle = '#ffffff';
   ctx.shadowColor = '#aaffff';
   ctx.shadowBlur = 4;
+  ctx.fillRect(px - 3, py - 1, 2, 2);
+  ctx.fillRect(px + 1, py - 1, 2, 2);
+  ctx.shadowBlur = 0;
+  ctx.globalAlpha = 1;
+}
+
+function drawEvolvedFogWeaver(ctx: CanvasRenderingContext2D, e: Enemy) {
+  // Miasma Weaver - semi-transparent, dark purple
+  const px = Math.floor(e.pos.x);
+  const py = Math.floor(e.pos.y);
+  const drift = Math.sin(e.wobblePhase * 0.5) * 2;
+  if (e.flashTimer > 0) { ctx.fillStyle = '#ffffff'; ctx.fillRect(px - 8, py - 8, 16, 16); return; }
+  ctx.globalAlpha = 0.5; // more transparent
+  ctx.fillStyle = '#220044';
+  ctx.fillRect(px - 2, py + 6, 1, 6 + drift);
+  ctx.fillRect(px + 1, py + 6, 1, 5 - drift);
+  ctx.fillRect(px - 4, py + 5, 1, 4);
+  ctx.fillRect(px + 3, py + 5, 1, 4);
+  ctx.fillStyle = '#1a0033';
+  ctx.fillRect(px - 4, py - 2, 8, 8);
+  ctx.fillStyle = '#110022';
+  ctx.fillRect(px - 8, py - 8 + drift, 16, 8);
+  ctx.fillStyle = '#220044';
+  ctx.fillRect(px - 6, py - 8 + drift, 12, 3);
+  ctx.fillStyle = '#cc88ff';
+  ctx.shadowColor = '#cc88ff';
+  ctx.shadowBlur = 6;
   ctx.fillRect(px - 3, py - 1, 2, 2);
   ctx.fillRect(px + 1, py - 1, 2, 2);
   ctx.shadowBlur = 0;
@@ -428,39 +729,27 @@ function drawBoss(ctx: CanvasRenderingContext2D, e: Enemy) {
   const py = Math.floor(e.pos.y);
   const lurch = Math.sin(e.wobblePhase * 0.4) * 2;
   if (e.flashTimer > 0) { ctx.fillStyle = '#ffffff'; ctx.fillRect(px - 18, py - 18, 36, 36); return; }
-
   const isEnraged = e.bossPhase === 3;
-
-  // Spore cape
   ctx.fillStyle = '#1a0033';
   ctx.fillRect(px - 12, py + 4, 4, 14 + lurch);
   ctx.fillRect(px + 8, py + 4, 4, 14 + lurch);
-
-  // Body
   ctx.fillStyle = '#0d0018';
   ctx.fillRect(px - 10, py - 4, 20, 16);
   ctx.fillStyle = '#1a0033';
   ctx.fillRect(px - 10, py - 4, 1, 16);
   ctx.fillRect(px + 9, py - 4, 1, 16);
-
-  // Cap with gold accents
   const capColor = isEnraged ? '#550000' : '#2a0055';
   ctx.fillStyle = capColor;
   ctx.fillRect(px - 18, py - 18 + lurch, 36, 16);
   ctx.fillStyle = isEnraged ? '#880000' : '#3a0077';
   ctx.fillRect(px - 16, py - 18 + lurch, 32, 5);
-
-  // Gold accents
   ctx.fillStyle = '#ffd700';
   ctx.fillRect(px - 14, py - 14 + lurch, 2, 8);
   ctx.fillRect(px + 12, py - 14 + lurch, 2, 8);
-  // Crown spores
   ctx.fillRect(px - 8, py - 20 + lurch, 2, 4);
   ctx.fillRect(px - 2, py - 22 + lurch, 2, 6);
   ctx.fillRect(px + 4, py - 21 + lurch, 2, 5);
   ctx.fillRect(px + 8, py - 20 + lurch, 2, 4);
-
-  // Eyes
   const eyeColor = isEnraged ? '#ff0000' : '#ff3333';
   ctx.fillStyle = eyeColor;
   ctx.shadowColor = eyeColor;
@@ -557,7 +846,6 @@ function drawGemPickup(ctx: CanvasRenderingContext2D, x: number, y: number, puls
     venom: ['#44ff44', '#88ff88'],
   };
   const [outer, inner] = colors[gemType];
-
   ctx.save();
   ctx.translate(px, py);
   ctx.scale(scale, scale);
@@ -578,7 +866,7 @@ function drawGemPickup(ctx: CanvasRenderingContext2D, x: number, y: number, puls
 }
 
 function renderHUD(ctx: CanvasRenderingContext2D, g: GameData) {
-  // Wave label - top left
+  // Wave label
   ctx.fillStyle = '#ffd700';
   ctx.font = '12px monospace';
   ctx.textAlign = 'left';
@@ -586,14 +874,13 @@ function renderHUD(ctx: CanvasRenderingContext2D, g: GameData) {
   ctx.font = '900 28px Cinzel, serif';
   ctx.fillText(`${g.wave}`, 30, 56);
 
-  // Enemies remaining
   if (g.state === 'playing' && g.enemiesRemainingInWave > 0) {
     ctx.fillStyle = '#ff4444';
     ctx.font = '12px monospace';
     ctx.fillText(`▸ ${g.enemiesRemainingInWave} REMAIN`, 30, 72);
   }
 
-  // HP orbs - top right
+  // HP orbs
   const orbSize = 10;
   const orbSpacing = 26;
   const orbStartX = g.width - 30 - (g.player.maxHp - 1) * orbSpacing;
@@ -621,37 +908,34 @@ function renderHUD(ctx: CanvasRenderingContext2D, g: GameData) {
     const barH = 16;
     const barX = 100;
     const barY = 70;
-    // Gold border
     ctx.strokeStyle = '#ffd700';
     ctx.lineWidth = 2;
     ctx.strokeRect(barX, barY, barW, barH);
-    // Red fill
     const fill = Math.max(0, boss.hp / boss.maxHp);
     ctx.fillStyle = '#880000';
     ctx.fillRect(barX + 1, barY + 1, barW - 2, barH - 2);
     ctx.fillStyle = '#cc0000';
     ctx.fillRect(barX + 1, barY + 1, (barW - 2) * fill, barH - 2);
-    // Name
     ctx.fillStyle = '#ffd700';
     ctx.font = '700 14px Cinzel, serif';
     ctx.textAlign = 'center';
     ctx.fillText('THE MYCELIUM HERALD', g.width / 2, barY - 6);
   }
 
-  // Score + Best - bottom left
+  // Score
   ctx.fillStyle = 'rgba(255,215,0,0.6)';
   ctx.font = '12px monospace';
   ctx.textAlign = 'left';
   ctx.fillText(`KILLS: ${g.score}`, 30, g.height - 40);
   ctx.fillText(`BEST WAVE: ${g.bestWave}`, 30, g.height - 24);
 
-  // Gem selector bar - bottom center
+  // Gem selector
   const gems: { type: WeaponType; key: string; name: string; color: string }[] = [
     { type: 'shadow', key: 'Click', name: 'Shadow', color: '#9b30ff' },
-    { type: 'fire', key: 'Q', name: 'Fire', color: '#ff5500' },
-    { type: 'venom', key: 'T', name: 'Venom', color: '#44ff44' },
+    { type: 'fire', key: 'Q', name: 'Ember', color: '#ff5500' },
     { type: 'frost', key: 'E', name: 'Frost', color: '#88ddff' },
     { type: 'storm', key: 'R', name: 'Storm', color: '#ffdd00' },
+    { type: 'venom', key: 'T', name: 'Venom', color: '#44ff44' },
   ];
 
   const gemBarWidth = gems.length * 50;
@@ -666,7 +950,6 @@ function renderHUD(ctx: CanvasRenderingContext2D, g: GameData) {
     const active = g.player.activeWeapon === gem.type;
     const size = active ? 10 : 8;
 
-    // Slot background
     ctx.fillStyle = 'rgba(0,0,0,0.5)';
     ctx.fillRect(gx - 14, gy - 14, 28, 28);
 
@@ -674,7 +957,6 @@ function renderHUD(ctx: CanvasRenderingContext2D, g: GameData) {
       ctx.fillStyle = active ? gem.color : '#444444';
       ctx.shadowColor = active ? gem.color : 'transparent';
       ctx.shadowBlur = active ? 8 : 0;
-      // Diamond shape
       ctx.beginPath();
       ctx.moveTo(gx, gy - size);
       ctx.lineTo(gx + size * 0.7, gy);
@@ -684,7 +966,6 @@ function renderHUD(ctx: CanvasRenderingContext2D, g: GameData) {
       ctx.fill();
       ctx.shadowBlur = 0;
     } else {
-      // Lock icon
       ctx.fillStyle = '#222222';
       ctx.fillRect(gx - 5, gy - 3, 10, 8);
       ctx.strokeStyle = '#333333';
@@ -694,7 +975,6 @@ function renderHUD(ctx: CanvasRenderingContext2D, g: GameData) {
       ctx.stroke();
     }
 
-    // Key label
     ctx.fillStyle = active ? '#ffffff' : 'rgba(255,255,255,0.3)';
     ctx.font = '9px monospace';
     ctx.textAlign = 'center';
@@ -710,18 +990,41 @@ function renderHUD(ctx: CanvasRenderingContext2D, g: GameData) {
     ctx.fillText(activeGem.name.toUpperCase(), g.width / 2, gemBarY - 20);
   }
 
-  // Controls hint
+  // Combo ready indicator
+  renderComboReadyIndicator(ctx, g);
+
   ctx.fillStyle = 'rgba(255,255,255,0.2)';
   ctx.font = '11px monospace';
   ctx.textAlign = 'center';
   ctx.fillText('WASD Move · Mouse Aim · Click Shoot', g.width / 2, g.height - 8);
 }
 
+function renderComboReadyIndicator(ctx: CanvasRenderingContext2D, g: GameData) {
+  // Check if any enemy has a status that can combo with current weapon
+  const weapon = g.player.activeWeapon;
+  let comboReady = false;
+  for (const e of g.enemies) {
+    if (!e.alive) continue;
+    if (weapon === 'frost' && (e.burning || e.poison)) comboReady = true;
+    if (weapon === 'fire' && (e.slow || e.shadowMark)) comboReady = true;
+    if (weapon === 'storm' && e.poison) comboReady = true;
+    if (comboReady) break;
+  }
+  if (comboReady) {
+    const pulse = Math.sin(Date.now() * 0.005) * 0.3 + 0.7;
+    ctx.globalAlpha = pulse;
+    ctx.fillStyle = '#ffd700';
+    ctx.font = '10px monospace';
+    ctx.textAlign = 'right';
+    ctx.fillText('COMBO READY', g.width - 20, g.height - 90);
+    ctx.globalAlpha = 1;
+  }
+}
+
 function renderStartScreen(ctx: CanvasRenderingContext2D, g: GameData) {
   ctx.fillStyle = 'rgba(0,0,0,0.6)';
   ctx.fillRect(0, 0, g.width, g.height);
 
-  // Spores on start screen
   for (const s of g.spores) {
     ctx.globalAlpha = s.opacity;
     ctx.fillStyle = '#ffffee';

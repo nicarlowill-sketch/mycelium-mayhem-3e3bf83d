@@ -61,6 +61,9 @@ const GameCanvas = () => {
       if (g.state === 'start' || g.state === 'gameOver') {
         startGame(g);
       }
+      if (g.state === 'gemUnlock') {
+        g.gemUnlockTimer = 0;
+      }
     };
     const onMouseUp = () => { g.mouseDown = false; };
     const onContextMenu = (e: MouseEvent) => e.preventDefault();

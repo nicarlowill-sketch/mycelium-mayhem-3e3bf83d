@@ -30,12 +30,31 @@ export interface Player {
 export type EnemyType = 'rusher' | 'sniper' | 'titan' | 'fogWeaver' | 'boss';
 
 export interface PoisonEffect {
-  remaining: number; // frames remaining
-  tickTimer: number; // frames until next damage tick
+  remaining: number;
+  tickTimer: number;
 }
 
 export interface SlowEffect {
-  remaining: number; // frames remaining
+  remaining: number;
+}
+
+export interface BurningEffect {
+  remaining: number;
+  tickTimer: number;
+}
+
+export interface ShadowMarkEffect {
+  remaining: number;
+}
+
+export interface DarkFlameEffect {
+  remaining: number;
+  tickTimer: number;
+}
+
+export interface FrozenToxinEffect {
+  remaining: number;
+  tickTimer: number;
 }
 
 export interface Enemy {
@@ -54,6 +73,10 @@ export interface Enemy {
   animTick: number;
   poison: PoisonEffect | null;
   slow: SlowEffect | null;
+  burning: BurningEffect | null;
+  shadowMark: ShadowMarkEffect | null;
+  darkFlame: DarkFlameEffect | null;
+  frozenToxin: FrozenToxinEffect | null;
   // Fog weaver specifics
   fogZone: FogZone | null;
   repositionTimer: number;
@@ -64,6 +87,12 @@ export interface Enemy {
   chargeVel: Vec2;
   isCharging: boolean;
   spawnCooldown: number;
+  // Evolution
+  evolutionTimer: number;
+  evolved: boolean;
+  evolving: boolean;
+  evolvingTimer: number;
+  evolutionWarning: boolean;
 }
 
 export interface Projectile {
@@ -75,6 +104,12 @@ export interface Projectile {
   piercing: boolean;
   chainRadius: number;
   hasChained: boolean;
+  // New projectile fields
+  travelDist: number;
+  wobblePhase: number;
+  growSize: number;
+  zigzagDir: number;
+  baseAngle: number;
 }
 
 export interface Particle {
@@ -132,7 +167,15 @@ export interface Camera {
   y: number;
 }
 
-export type GameState = 'start' | 'playing' | 'waveClear' | 'gameOver' | 'bossIntro';
+export interface ComboPopup {
+  pos: Vec2;
+  text: string;
+  color: string;
+  life: number;
+  maxLife: number;
+}
+
+export type GameState = 'start' | 'playing' | 'waveClear' | 'gameOver' | 'bossIntro' | 'gemUnlock';
 
 export interface GameData {
   state: GameState;
@@ -160,7 +203,6 @@ export interface GameData {
   mouseDown: boolean;
   width: number;
   height: number;
-  // Arena logical size
   arenaWidth: number;
   arenaHeight: number;
   borderSize: number;
@@ -172,6 +214,10 @@ export interface GameData {
   waveAnnounceText: string;
   lowHpPulse: number;
   enemiesRemainingInWave: number;
-  // Sound event queue
   soundEvents: string[];
+  comboPopups: ComboPopup[];
+  gemUnlockTimer: number;
+  gemUnlockType: WeaponType | null;
+  screenFlashTimer: number;
+  screenFlashColor: string;
 }

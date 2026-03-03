@@ -7,9 +7,9 @@ const PROJECTILE_SPEED = 7;
 const FIRE_RATES: Record<WeaponType, number> = {
   shadow: 250,
   fire: 400,
-  frost: 286, // 3.5/sec
-  storm: 500, // 2/sec
-  venom: 250, // 4/sec
+  frost: 286,
+  storm: 500,
+  venom: 250,
 };
 const INVINCIBLE_DURATION = 90;
 const MAX_PARTICLES = 300;
@@ -22,10 +22,19 @@ const ARENA_W = 1200;
 const ARENA_H = 800;
 const CAMERA_LERP = 0.08;
 
+// Evolution timers (in frames at ~60fps)
+const EVOLUTION_TIMERS: Record<string, number> = {
+  rusher: 720,   // 12 seconds
+  sniper: 1080,  // 18 seconds
+  fogWeaver: 1200, // 20 seconds
+};
+
+// Gem drops from bosses at wave 5, 10, 15, 20
 const GEM_DROP_MAP: Record<number, WeaponType> = {
-  4: 'venom',
-  5: 'frost', // boss wave 5 drops frost (wave 6 in old spec mapped to boss wave)
-  9: 'storm',
+  5: 'fire',
+  10: 'frost',
+  15: 'storm',
+  20: 'venom',
 };
 
 export function createGame(w: number, h: number): GameData {
@@ -68,6 +77,11 @@ export function createGame(w: number, h: number): GameData {
     lowHpPulse: 0,
     enemiesRemainingInWave: 0,
     soundEvents: [],
+    comboPopups: [],
+    gemUnlockTimer: 0,
+    gemUnlockType: null,
+    screenFlashTimer: 0,
+    screenFlashColor: '#ffffff',
   };
 }
 
@@ -95,7 +109,6 @@ function createPlayer(): Player {
 
 function createObstacles(): Obstacle[] {
   const obs: Obstacle[] = [];
-  // 8 pillars
   const pillarPositions: [number, number][] = [
     [200, 200], [1000, 200], [200, 600], [1000, 600],
     [400, 400], [800, 400], [600, 200], [600, 600],
@@ -103,7 +116,6 @@ function createObstacles(): Obstacle[] {
   for (const [x, y] of pillarPositions) {
     obs.push({ pos: { x, y }, width: 32, height: 32, type: 'pillar' });
   }
-  // 4 wall segments
   obs.push({ pos: { x: 300, y: 350 }, width: 64, height: 16, type: 'wall' });
   obs.push({ pos: { x: 850, y: 350 }, width: 64, height: 16, type: 'wall' });
   obs.push({ pos: { x: 500, y: 250 }, width: 16, height: 64, type: 'wall' });
@@ -144,6 +156,7 @@ export function startGame(g: GameData) {
   g.particles = [];
   g.fogZones = [];
   g.toxicPuddles = [];
+  g.comboPopups = [];
   g.wave = 0;
   g.score = 0;
   g.wavesCleared = 0;
@@ -152,6 +165,9 @@ export function startGame(g: GameData) {
   g.gemNotifyTimer = 0;
   g.bossIntroTimer = 0;
   g.waveAnnounceTimer = 0;
+  g.gemUnlockTimer = 0;
+  g.gemUnlockType = null;
+  g.screenFlashTimer = 0;
   g.soundEvents = [];
   startNextWave(g);
 }
@@ -166,7 +182,6 @@ function startNextWave(g: GameData) {
   g.waveAnnounceTimer = 120;
 
   if (isBossWave(g.wave)) {
-    // Boss wave
     g.state = 'bossIntro';
     g.bossIntroTimer = 120;
     g.waveAnnounceText = 'A HERALD APPROACHES';
@@ -198,21 +213,18 @@ function spawnWaveEnemies(g: GameData) {
   for (let i = 0; i < rusherCount; i++) {
     g.enemies.push(createEnemy(g, rusherSpeed, 'rusher'));
   }
-  // Snipers from wave 3
   if (g.wave >= 3) {
     const sniperCount = Math.min(g.wave - 2, 5);
     for (let i = 0; i < sniperCount; i++) {
       g.enemies.push(createEnemy(g, 0.8, 'sniper'));
     }
   }
-  // Fog weavers from wave 5
   if (g.wave >= 5 && !isBossWave(g.wave)) {
     const fwCount = Math.min(Math.floor((g.wave - 4) / 2), 3);
     for (let i = 0; i < fwCount; i++) {
       g.enemies.push(createEnemy(g, 0.5, 'fogWeaver'));
     }
   }
-  // Titans from wave 6
   if (g.wave >= 6 && !isBossWave(g.wave)) {
     const titanCount = Math.min(Math.floor((g.wave - 5) / 2), 3);
     for (let i = 0; i < titanCount; i++) {
@@ -234,6 +246,7 @@ function createEnemy(g: GameData, speed: number, type: Enemy['type']): Enemy {
   }
   const hpMap: Record<string, number> = { rusher: 2, sniper: 3, titan: 12, fogWeaver: 4, boss: 30 };
   const hp = hpMap[type] || 2;
+  const evoTimer = EVOLUTION_TIMERS[type] || 0;
   return {
     pos: { x, y },
     hp,
@@ -250,6 +263,10 @@ function createEnemy(g: GameData, speed: number, type: Enemy['type']): Enemy {
     animTick: 0,
     poison: null,
     slow: null,
+    burning: null,
+    shadowMark: null,
+    darkFlame: null,
+    frozenToxin: null,
     fogZone: null,
     repositionTimer: type === 'fogWeaver' ? 180 : 0,
     bossPhase: 1,
@@ -258,6 +275,11 @@ function createEnemy(g: GameData, speed: number, type: Enemy['type']): Enemy {
     chargeVel: { x: 0, y: 0 },
     isCharging: false,
     spawnCooldown: 480,
+    evolutionTimer: evoTimer,
+    evolved: false,
+    evolving: false,
+    evolvingTimer: 0,
+    evolutionWarning: false,
   };
 }
 
@@ -279,12 +301,30 @@ export function update(g: GameData, now: number) {
   }
   if (g.gemNotifyTimer > 0) g.gemNotifyTimer--;
   if (g.waveAnnounceTimer > 0) g.waveAnnounceTimer--;
+  if (g.screenFlashTimer > 0) g.screenFlashTimer--;
+
+  // Combo popups
+  for (const cp of g.comboPopups) {
+    cp.pos.y -= 0.8;
+    cp.life--;
+  }
+  g.comboPopups = g.comboPopups.filter(cp => cp.life > 0);
 
   if (g.player.hp <= 2 && g.player.alive) {
     g.lowHpPulse += 0.05;
   }
 
   if (g.state === 'start' || g.state === 'gameOver') return;
+
+  // Gem unlock state
+  if (g.state === 'gemUnlock') {
+    g.gemUnlockTimer--;
+    if (g.gemUnlockTimer <= 0) {
+      g.state = 'playing';
+      g.gemUnlockType = null;
+    }
+    return;
+  }
 
   if (g.state === 'bossIntro') {
     g.bossIntroTimer--;
@@ -325,7 +365,7 @@ export function update(g: GameData, now: number) {
     return;
   }
 
-  // Player speed - check if in fog zone
+  // Player speed - check if in fog zone or toxic puddle void patches
   p.speedMultiplier = 1;
   for (const fz of g.fogZones) {
     const dx = p.pos.x - fz.pos.x;
@@ -376,7 +416,6 @@ export function update(g: GameData, now: number) {
   p.pos.x += p.vel.x;
   p.pos.y += p.vel.y;
 
-  // Obstacle collision for player
   for (const obs of g.obstacles) {
     resolveObstacleCollision(p.pos, 8, obs);
   }
@@ -385,7 +424,7 @@ export function update(g: GameData, now: number) {
   p.pos.x = Math.max(b, Math.min(g.arenaWidth - b, p.pos.x));
   p.pos.y = Math.max(b, Math.min(g.arenaHeight - b, p.pos.y));
 
-  // Aim: convert screen mouse to world coords
+  // Aim
   const worldMouseX = g.mousePos.x + g.camera.x;
   const worldMouseY = g.mousePos.y + g.camera.y;
   p.angle = Math.atan2(worldMouseY - p.pos.y, worldMouseX - p.pos.x);
@@ -396,17 +435,29 @@ export function update(g: GameData, now: number) {
     const gdy = p.pos.y - g.gemPickup.pos.y;
     if (Math.sqrt(gdx * gdx + gdy * gdy) < 20) {
       g.gemPickup.collected = true;
-      p.gemsCollected[g.gemPickup.gemType] = true;
-      p.activeWeapon = g.gemPickup.gemType;
+      const gt = g.gemPickup.gemType;
+      p.gemsCollected[gt] = true;
+      p.activeWeapon = gt;
+      g.soundEvents.push('gemPickup');
+      // Trigger gem unlock presentation
+      g.state = 'gemUnlock';
+      g.gemUnlockTimer = 120; // 2 seconds
+      g.gemUnlockType = gt;
       const nameMap: Record<string, string> = {
         fire: 'EMBER GEM ACQUIRED',
         frost: 'FROST GEM ACQUIRED',
         storm: 'STORM GEM ACQUIRED',
         venom: 'VENOM GEM ACQUIRED',
       };
-      g.gemNotifyText = nameMap[g.gemPickup.gemType] || 'GEM ACQUIRED';
+      g.gemNotifyText = nameMap[gt] || 'GEM ACQUIRED';
       g.gemNotifyTimer = 180;
-      g.soundEvents.push('gemPickup');
+      // Particle burst
+      const colorMap: Record<string, string> = {
+        fire: '#ff5500', frost: '#88ddff', storm: '#ffdd00', venom: '#44ff44',
+      };
+      for (let i = 0; i < 30; i++) {
+        addParticle(g, p.pos.x, p.pos.y, colorMap[gt] || '#ffffff', 3, 2, 2);
+      }
     }
   }
 
@@ -418,7 +469,7 @@ export function update(g: GameData, now: number) {
       const pdx = e.pos.x - puddle.pos.x;
       const pdy = e.pos.y - puddle.pos.y;
       if (Math.sqrt(pdx * pdx + pdy * pdy) < puddle.radius && !e.poison) {
-        e.poison = { remaining: 240, tickTimer: 60 }; // 4s poison, tick every 1s
+        e.poison = { remaining: 240, tickTimer: 60 };
       }
     }
   }
@@ -431,7 +482,8 @@ export function update(g: GameData, now: number) {
     const cos = Math.cos(p.angle);
     const sin = Math.sin(p.angle);
     const dmgMap: Record<WeaponType, number> = { shadow: 1, fire: 2, frost: 2, storm: 2, venom: 1 };
-    const speed = p.activeWeapon === 'frost' ? 6 : p.activeWeapon === 'storm' ? 8 : PROJECTILE_SPEED;
+    const speedMap: Record<WeaponType, number> = { shadow: 7, fire: 7, frost: 6, storm: 8, venom: 4.5 };
+    const speed = speedMap[p.activeWeapon];
     g.projectiles.push({
       pos: { x: p.pos.x + cos * 12, y: p.pos.y + sin * 12 },
       vel: { x: cos * speed, y: sin * speed },
@@ -441,6 +493,11 @@ export function update(g: GameData, now: number) {
       piercing: p.activeWeapon === 'storm',
       chainRadius: p.activeWeapon === 'storm' ? 80 : 0,
       hasChained: false,
+      travelDist: 0,
+      wobblePhase: 0,
+      growSize: 6,
+      zigzagDir: Math.random() > 0.5 ? 1 : -1,
+      baseAngle: p.angle,
     });
     p.attackTimer = 8;
     g.soundEvents.push('shoot_' + p.activeWeapon);
@@ -454,7 +511,7 @@ export function update(g: GameData, now: number) {
   for (const fz of g.fogZones) {
     fz.life--;
     if (fz.radius < fz.maxRadius) {
-      fz.radius += (fz.maxRadius - 80) / (4 * 60); // expand over 4 seconds
+      fz.radius += (fz.maxRadius - 80) / (4 * 60);
     }
   }
   g.fogZones = g.fogZones.filter(fz => fz.life > 0);
@@ -462,31 +519,74 @@ export function update(g: GameData, now: number) {
   // Update projectiles
   for (const proj of g.projectiles) {
     if (!proj.alive) continue;
-    proj.pos.x += proj.vel.x;
-    proj.pos.y += proj.vel.y;
 
-    // Trails
-    if (proj.type === 'shadow' && Math.random() < 0.5) {
-      addParticle(g, proj.pos.x, proj.pos.y, '#7722cc', 1.5, 0.3, 0.3);
-    } else if (proj.type === 'fire' && Math.random() < 0.6) {
-      addParticle(g, proj.pos.x, proj.pos.y, Math.random() > 0.5 ? '#ffaa00' : '#ff5500', 1.5, 0.3, 0.4);
-    } else if (proj.type === 'frost' && Math.random() < 0.5) {
-      addParticle(g, proj.pos.x, proj.pos.y, '#88ddff', 1, 0.3, 0.3);
-    } else if (proj.type === 'storm' && Math.random() < 0.7) {
-      addParticle(g, proj.pos.x, proj.pos.y, Math.random() > 0.5 ? '#ffdd00' : '#ffffff', 1, 0.4, 0.2);
-    } else if (proj.type === 'venom' && Math.random() < 0.5) {
-      addParticle(g, proj.pos.x, proj.pos.y, '#44ff44', 1.5, 0.3, 0.4);
+    // Special movement per type
+    if (proj.type === 'fire') {
+      // Wobble
+      proj.wobblePhase += 0.5;
+      const perpX = -Math.sin(proj.baseAngle);
+      const perpY = Math.cos(proj.baseAngle);
+      const wobble = Math.sin(proj.wobblePhase) * 2;
+      proj.pos.x += proj.vel.x + perpX * wobble * 0.15;
+      proj.pos.y += proj.vel.y + perpY * wobble * 0.15;
+    } else if (proj.type === 'storm') {
+      // Zigzag
+      proj.travelDist += Math.sqrt(proj.vel.x * proj.vel.x + proj.vel.y * proj.vel.y);
+      if (proj.travelDist > 8) {
+        proj.travelDist = 0;
+        proj.zigzagDir *= -1;
+      }
+      const perpX = -Math.sin(proj.baseAngle);
+      const perpY = Math.cos(proj.baseAngle);
+      proj.pos.x += proj.vel.x + perpX * proj.zigzagDir * 0.6;
+      proj.pos.y += proj.vel.y + perpY * proj.zigzagDir * 0.6;
+    } else if (proj.type === 'venom') {
+      // Grow as it travels
+      proj.growSize = Math.min(10, proj.growSize + 0.03);
+      proj.pos.x += proj.vel.x;
+      proj.pos.y += proj.vel.y;
+    } else {
+      proj.pos.x += proj.vel.x;
+      proj.pos.y += proj.vel.y;
+    }
+
+    // Trails per type
+    if (proj.type === 'shadow') {
+      // Orbiting particles
+      proj.wobblePhase += 0.3;
+      if (Math.random() < 0.5) {
+        addParticle(g, proj.pos.x + Math.cos(proj.wobblePhase) * 4, proj.pos.y + Math.sin(proj.wobblePhase) * 4, '#7722cc', 1, 0.2, 0.3);
+      }
+      if (Math.random() < 0.4) {
+        addParticle(g, proj.pos.x, proj.pos.y, '#9b30ff', 1.5, 0.1, 0.4);
+      }
+    } else if (proj.type === 'fire') {
+      if (Math.random() < 0.7) {
+        addParticle(g, proj.pos.x, proj.pos.y, Math.random() > 0.5 ? '#ffaa00' : '#ff5500', 1.5 + Math.random(), 0.3, 0.4);
+      }
+    } else if (proj.type === 'frost') {
+      if (Math.random() < 0.4) {
+        addParticle(g, proj.pos.x + (Math.random() - 0.5) * 4, proj.pos.y + (Math.random() - 0.5) * 4, '#aaeeff', 1, 0.2, 0.3);
+      }
+    } else if (proj.type === 'storm') {
+      if (Math.random() < 0.6) {
+        addParticle(g, proj.pos.x + (Math.random() - 0.5) * 6, proj.pos.y + (Math.random() - 0.5) * 6, '#ffffff', 1, 0.3, 0.15);
+      }
+    } else if (proj.type === 'venom') {
+      // Drip particles fall downward
+      if (Math.random() < 0.5) {
+        const pt = addParticleReturn(g, proj.pos.x + (Math.random() - 0.5) * 4, proj.pos.y, '#44ff44', 1.5, 0.1, 0.5);
+        if (pt) { pt.vel.x = 0; pt.vel.y = 1.5; }
+      }
     } else if (proj.type === 'enemy' && Math.random() < 0.3) {
       addParticle(g, proj.pos.x, proj.pos.y, '#00ff44', 1, 0.2, 0.3);
     }
 
-    // Obstacle collision for projectiles
-    if (proj.type !== 'enemy' || proj.type === 'enemy') {
-      for (const obs of g.obstacles) {
-        if (pointInRect(proj.pos, obs)) {
-          proj.alive = false;
-          break;
-        }
+    // Obstacle collision
+    for (const obs of g.obstacles) {
+      if (pointInRect(proj.pos, obs)) {
+        proj.alive = false;
+        break;
       }
     }
 
@@ -519,6 +619,30 @@ export function update(g: GameData, now: number) {
       e.animFrame = (e.animFrame + 1) % 4;
     }
 
+    // Evolution timer
+    if (e.evolutionTimer > 0 && !e.evolved && !e.evolving && e.type !== 'titan' && e.type !== 'boss') {
+      e.evolutionTimer--;
+      // Warning at 240 frames (4 seconds) before evolution
+      if (e.evolutionTimer <= 240 && !e.evolutionWarning) {
+        e.evolutionWarning = true;
+      }
+      if (e.evolutionTimer <= 0) {
+        e.evolving = true;
+        e.evolvingTimer = 60; // 1 second transform
+      }
+    }
+
+    // Evolving animation
+    if (e.evolving) {
+      e.evolvingTimer--;
+      e.flashTimer = 2; // constant flashing during evolution
+      if (e.evolvingTimer <= 0) {
+        e.evolving = false;
+        e.evolved = true;
+        evolveEnemy(e);
+      }
+    }
+
     // Poison tick
     if (e.poison) {
       e.poison.remaining--;
@@ -527,22 +651,79 @@ export function update(g: GameData, now: number) {
         e.poison.tickTimer = 60;
         e.hp -= 0.5;
         e.flashTimer = 3;
-        if (e.hp <= 0) {
-          killEnemy(g, e);
-        }
+        if (e.hp <= 0) killEnemy(g, e);
       }
       if (e.poison.remaining <= 0) e.poison = null;
     }
 
+    // Burning tick
+    if (e.burning) {
+      e.burning.remaining--;
+      e.burning.tickTimer--;
+      if (e.burning.tickTimer <= 0) {
+        e.burning.tickTimer = 30;
+        // Visual fire particles
+        addParticle(g, e.pos.x + (Math.random() - 0.5) * 8, e.pos.y - 5, '#ff5500', 1.5, 0.3, 0.3);
+      }
+      if (e.burning.remaining <= 0) e.burning = null;
+    }
+
+    // Shadow mark tick
+    if (e.shadowMark) {
+      e.shadowMark.remaining--;
+      if (e.shadowMark.remaining <= 0) e.shadowMark = null;
+    }
+
+    // Dark flame tick
+    if (e.darkFlame) {
+      e.darkFlame.remaining--;
+      e.darkFlame.tickTimer--;
+      if (e.darkFlame.tickTimer <= 0) {
+        e.darkFlame.tickTimer = 60;
+        e.hp -= 1;
+        e.flashTimer = 3;
+        addParticle(g, e.pos.x, e.pos.y, '#331100', 2, 0.4, 0.4);
+        addParticle(g, e.pos.x, e.pos.y, '#ff5500', 1.5, 0.3, 0.3);
+        if (e.hp <= 0) {
+          // Dark flame spreads on death
+          for (const other of g.enemies) {
+            if (other === e || !other.alive) continue;
+            if (dist(e.pos, other.pos) < 60) {
+              other.darkFlame = { remaining: 360, tickTimer: 60 };
+            }
+          }
+          killEnemy(g, e);
+        }
+      }
+      if (e.darkFlame.remaining <= 0) e.darkFlame = null;
+    }
+
+    // Frozen toxin tick
+    if (e.frozenToxin) {
+      e.frozenToxin.remaining--;
+      e.frozenToxin.tickTimer--;
+      e.speed = 0; // completely immobile
+      if (e.frozenToxin.tickTimer <= 0) {
+        e.frozenToxin.tickTimer = 60;
+        e.hp -= 1; // doubled poison damage
+        e.flashTimer = 3;
+        if (e.hp <= 0) killEnemy(g, e);
+      }
+      if (e.frozenToxin.remaining <= 0) {
+        e.frozenToxin = null;
+        e.speed = e.baseSpeed;
+      }
+    }
+
     // Slow effect
-    if (e.slow) {
+    if (e.slow && !e.frozenToxin) {
       e.slow.remaining--;
       e.speed = e.baseSpeed * 0.5;
       if (e.slow.remaining <= 0) {
         e.slow = null;
         e.speed = e.baseSpeed;
       }
-    } else {
+    } else if (!e.frozenToxin) {
       e.speed = e.baseSpeed;
     }
 
@@ -553,40 +734,63 @@ export function update(g: GameData, now: number) {
     const elen = Math.sqrt(edx * edx + edy * edy);
 
     if (e.type === 'rusher') {
-      updateRusher(g, e, p, edx, edy, elen);
+      if (e.evolved) updateEvolvedRusher(g, e, p, edx, edy, elen);
+      else updateRusher(g, e, p, edx, edy, elen);
     } else if (e.type === 'sniper') {
-      updateSniper(g, e, p, edx, edy, elen);
+      if (e.evolved) updateEvolvedSniper(g, e, p, edx, edy, elen);
+      else updateSniper(g, e, p, edx, edy, elen);
     } else if (e.type === 'titan') {
       updateTitan(g, e, p, edx, edy, elen);
     } else if (e.type === 'fogWeaver') {
-      updateFogWeaver(g, e, p, edx, edy, elen);
+      if (e.evolved) updateEvolvedFogWeaver(g, e, p, edx, edy, elen);
+      else updateFogWeaver(g, e, p, edx, edy, elen);
     } else if (e.type === 'boss') {
       updateBoss(g, e, p, edx, edy, elen);
     }
 
-    // Obstacle avoidance for enemies
+    // Obstacle avoidance
     for (const obs of g.obstacles) {
       resolveObstacleCollision(e.pos, e.type === 'titan' ? 14 : e.type === 'boss' ? 18 : 8, obs);
     }
 
-    // Clamp to arena
     const eb = g.borderSize + 10;
     e.pos.x = Math.max(eb, Math.min(g.arenaWidth - eb, e.pos.x));
     e.pos.y = Math.max(eb, Math.min(g.arenaHeight - eb, e.pos.y));
 
-    // Check player projectile hits on enemies
+    // Check player projectile hits
     for (const proj of g.projectiles) {
       if (!proj.alive || proj.type === 'enemy') continue;
       const pdx = proj.pos.x - e.pos.x;
       const pdy = proj.pos.y - e.pos.y;
       const hitRadius = e.type === 'boss' ? 18 : e.type === 'titan' ? 14 : 14;
       if (Math.sqrt(pdx * pdx + pdy * pdy) < hitRadius) {
-        if (!proj.piercing) proj.alive = false;
+        // Frost pierces through first enemy
+        if (proj.type === 'frost') {
+          if (!proj.hasChained) {
+            proj.hasChained = true; // use hasChained as "has pierced once" flag
+          } else {
+            proj.alive = false;
+          }
+        } else if (!proj.piercing) {
+          proj.alive = false;
+        }
+        
         e.hp -= proj.damage;
         e.flashTimer = 6;
         g.soundEvents.push('enemyHit');
 
-        // Knockback for fire (and titans only from fire)
+        // Apply status effects for combos
+        if (proj.type === 'fire') {
+          e.burning = { remaining: 150, tickTimer: 30 }; // 2.5 seconds
+        }
+        if (proj.type === 'shadow') {
+          e.shadowMark = { remaining: 150 }; // 2.5 seconds
+        }
+
+        // Check combos BEFORE applying new effects
+        checkCombos(g, e, proj.type as WeaponType);
+
+        // Knockback for fire
         if (proj.type === 'fire' && elen > 0) {
           const kb = e.type === 'titan' ? 4 : 8;
           e.pos.x += (-edx / elen) * kb;
@@ -595,7 +799,7 @@ export function update(g: GameData, now: number) {
 
         // Frost slow
         if (proj.type === 'frost') {
-          e.slow = { remaining: 120 }; // 2 seconds
+          e.slow = { remaining: 120 };
           for (let i = 0; i < 6; i++) {
             addParticle(g, proj.pos.x, proj.pos.y, '#88ddff', 2);
           }
@@ -604,61 +808,53 @@ export function update(g: GameData, now: number) {
         // Storm chain
         if (proj.type === 'storm' && !proj.hasChained && proj.chainRadius > 0) {
           proj.hasChained = true;
-          // Find nearest other enemy
           let nearest: Enemy | null = null;
           let nearDist = proj.chainRadius;
           for (const other of g.enemies) {
             if (other === e || !other.alive) continue;
             const cd = dist(e.pos, other.pos);
-            if (cd < nearDist) {
-              nearDist = cd;
-              nearest = other;
-            }
+            if (cd < nearDist) { nearDist = cd; nearest = other; }
           }
           if (nearest) {
             nearest.hp -= proj.damage * 0.5;
             nearest.flashTimer = 6;
-            // Electric chain visual
-            for (let i = 0; i < 4; i++) {
-              addParticle(g, nearest.pos.x, nearest.pos.y, '#ffdd00', 2);
-            }
+            for (let i = 0; i < 4; i++) addParticle(g, nearest.pos.x, nearest.pos.y, '#ffdd00', 2);
             if (nearest.hp <= 0) killEnemy(g, nearest);
           }
           g.screenShakeIntensity = Math.max(g.screenShakeIntensity, 3);
         }
 
-        // Venom poison
+        // Venom poison + puddle
         if (proj.type === 'venom') {
           e.poison = { remaining: 240, tickTimer: 60 };
-          // Toxic puddle
-          g.toxicPuddles.push({ pos: { x: proj.pos.x, y: proj.pos.y }, life: 90, radius: 20 });
-          for (let i = 0; i < 4; i++) {
-            addParticle(g, proj.pos.x, proj.pos.y, '#44ff44', 2);
-          }
+          g.toxicPuddles.push({ pos: { x: proj.pos.x, y: proj.pos.y }, life: 120, radius: 40 });
+          for (let i = 0; i < 4; i++) addParticle(g, proj.pos.x, proj.pos.y, '#44ff44', 2);
         }
 
         // Impact particles
         const colorMap: Record<string, string[]> = {
-          shadow: ['#9b30ff'],
+          shadow: ['#9b30ff', '#6600bb'],
           fire: ['#ff5500', '#ffaa00', '#ff8800'],
-          frost: ['#88ddff', '#aaeeff'],
+          frost: ['#88ddff', '#aaeeff', '#ffffff'],
           storm: ['#ffdd00', '#ffffff'],
           venom: ['#44ff44', '#00cc33'],
         };
         const colors = colorMap[proj.type] || ['#ffffff'];
-        const count = proj.type === 'fire' ? 6 : 4;
+        const count = proj.type === 'fire' ? 5 : proj.type === 'frost' ? 6 : 4;
         for (let i = 0; i < count; i++) {
           addParticle(g, proj.pos.x, proj.pos.y, colors[Math.floor(Math.random() * colors.length)], 2);
         }
 
         if (e.hp <= 0) {
-          killEnemy(g, e);
+          // Score multiplier for evolved/evolving enemies
+          const wasEvolving = e.evolving;
+          killEnemy(g, e, wasEvolving);
         }
       }
     }
   }
 
-  // Clean up dead
+  // Clean up
   g.projectiles = g.projectiles.filter(p => p.alive);
   g.enemies = g.enemies.filter(e => e.alive);
   g.enemiesRemainingInWave = g.enemies.length;
@@ -673,7 +869,7 @@ export function update(g: GameData, now: number) {
   }
   g.particles = g.particles.filter(pt => pt.life > 0);
 
-  // Screen shake decay
+  // Screen shake
   if (g.screenShakeIntensity > 0) {
     g.screenShake.x = (Math.random() - 0.5) * g.screenShakeIntensity;
     g.screenShake.y = (Math.random() - 0.5) * g.screenShakeIntensity;
@@ -685,12 +881,11 @@ export function update(g: GameData, now: number) {
     }
   }
 
-  // Camera follow player
+  // Camera
   const targetCamX = p.pos.x - g.width / 2;
   const targetCamY = p.pos.y - g.height / 2;
   g.camera.x += (targetCamX - g.camera.x) * CAMERA_LERP;
   g.camera.y += (targetCamY - g.camera.y) * CAMERA_LERP;
-  // Clamp camera
   g.camera.x = Math.max(0, Math.min(g.arenaWidth - g.width, g.camera.x));
   g.camera.y = Math.max(0, Math.min(g.arenaHeight - g.height, g.camera.y));
 
@@ -701,7 +896,7 @@ export function update(g: GameData, now: number) {
     g.wavesCleared++;
     g.soundEvents.push('waveClear');
 
-    // Gem drops
+    // Gem drops from boss waves
     const gemType = GEM_DROP_MAP[g.wave];
     if (gemType && !p.gemsCollected[gemType] && !g.gemPickup) {
       g.gemPickup = {
@@ -714,6 +909,105 @@ export function update(g: GameData, now: number) {
   }
 }
 
+// ---- Combo system ----
+function checkCombos(g: GameData, e: Enemy, hitType: WeaponType) {
+  // SHATTER: Ice + Fire
+  if (hitType === 'frost' && e.burning) {
+    triggerShatter(g, e);
+  } else if (hitType === 'fire' && e.slow) {
+    triggerShatter(g, e);
+  }
+
+  // ELECTROTOXIN: Lightning + Poison
+  if (hitType === 'storm' && e.poison) {
+    triggerElectrotoxin(g, e);
+  }
+
+  // DARK FLAME: Fire + Shadow
+  if (hitType === 'fire' && e.shadowMark) {
+    triggerDarkFlame(g, e);
+  }
+
+  // FROZEN TOXIN: Ice + Poison
+  if (hitType === 'frost' && e.poison) {
+    triggerFrozenToxin(g, e);
+  }
+}
+
+function triggerShatter(g: GameData, e: Enemy) {
+  e.hp -= 6;
+  // AoE damage
+  for (const other of g.enemies) {
+    if (other === e || !other.alive) continue;
+    if (dist(e.pos, other.pos) < 80) {
+      other.hp -= 3;
+      other.flashTimer = 6;
+      if (other.hp <= 0) killEnemy(g, other);
+    }
+  }
+  for (let i = 0; i < 16; i++) {
+    addParticle(g, e.pos.x, e.pos.y, Math.random() > 0.5 ? '#ffffff' : '#88ddff', 3, 1.5, 1.5);
+  }
+  g.screenFlashTimer = 4;
+  g.screenFlashColor = '#ffffff';
+  g.screenShakeIntensity = Math.max(g.screenShakeIntensity, 15);
+  g.comboPopups.push({ pos: { x: e.pos.x, y: e.pos.y - 20 }, text: 'SHATTER', color: '#88ddff', life: 72, maxLife: 72 });
+  if (e.hp <= 0) killEnemy(g, e);
+}
+
+function triggerElectrotoxin(g: GameData, e: Enemy) {
+  // Chain to ALL enemies within 120px
+  for (const other of g.enemies) {
+    if (other === e || !other.alive) continue;
+    if (dist(e.pos, other.pos) < 120) {
+      other.hp -= 1;
+      other.flashTimer = 6;
+      for (let i = 0; i < 3; i++) addParticle(g, other.pos.x, other.pos.y, '#ffdd00', 2);
+      if (other.hp <= 0) killEnemy(g, other);
+    }
+  }
+  g.comboPopups.push({ pos: { x: e.pos.x, y: e.pos.y - 20 }, text: 'ELECTROTOXIN', color: '#aaff00', life: 72, maxLife: 72 });
+  g.screenShakeIntensity = Math.max(g.screenShakeIntensity, 8);
+}
+
+function triggerDarkFlame(g: GameData, e: Enemy) {
+  e.darkFlame = { remaining: 360, tickTimer: 60 }; // 6 seconds, 1 dmg/sec
+  for (let i = 0; i < 8; i++) {
+    addParticle(g, e.pos.x, e.pos.y, Math.random() > 0.5 ? '#331100' : '#ff5500', 2, 0.5, 0.6);
+  }
+  g.comboPopups.push({ pos: { x: e.pos.x, y: e.pos.y - 20 }, text: 'DARK FLAME', color: '#cc4400', life: 72, maxLife: 72 });
+}
+
+function triggerFrozenToxin(g: GameData, e: Enemy) {
+  e.frozenToxin = { remaining: 240, tickTimer: 60 }; // 4 seconds, doubled poison
+  e.speed = 0;
+  for (let i = 0; i < 8; i++) {
+    addParticle(g, e.pos.x, e.pos.y, Math.random() > 0.5 ? '#226666' : '#88ddff', 2, 0.3, 0.8);
+  }
+  g.comboPopups.push({ pos: { x: e.pos.x, y: e.pos.y - 20 }, text: 'FROZEN TOXIN', color: '#44aaaa', life: 72, maxLife: 72 });
+}
+
+// ---- Evolution ----
+function evolveEnemy(e: Enemy) {
+  if (e.type === 'rusher') {
+    // Spine Rusher
+    e.hp = Math.max(e.hp, 4);
+    e.maxHp = 4;
+    e.baseSpeed *= 1.4;
+    e.speed = e.baseSpeed;
+  } else if (e.type === 'sniper') {
+    // Void Sniper
+    e.hp = Math.max(e.hp, 5);
+    e.maxHp = 5;
+  } else if (e.type === 'fogWeaver') {
+    // Miasma Weaver
+    e.hp = Math.max(e.hp, 7);
+    e.maxHp = 7;
+    e.repositionTimer = 90; // 1.5 sec
+  }
+}
+
+// ---- Enemy AI ----
 function updateRusher(g: GameData, e: Enemy, p: Player, edx: number, edy: number, elen: number) {
   if (elen > 0) {
     e.pos.x += (edx / elen) * e.speed;
@@ -721,10 +1015,32 @@ function updateRusher(g: GameData, e: Enemy, p: Player, edx: number, edy: number
   }
   if (elen < 16 && p.invincibleTimer <= 0) {
     damagePlayer(g, 1);
+    if (elen > 0) { p.vel.x = -(edx / elen) * 5; p.vel.y = -(edy / elen) * 5; }
+  }
+}
+
+function updateEvolvedRusher(g: GameData, e: Enemy, p: Player, edx: number, edy: number, elen: number) {
+  // Spine Rusher - occasional dash charge
+  if (e.chargeTimer > 0) {
+    e.chargeTimer--;
+    e.pos.x += e.chargeVel.x;
+    e.pos.y += e.chargeVel.y;
+  } else {
     if (elen > 0) {
-      p.vel.x = -(edx / elen) * 5;
-      p.vel.y = -(edy / elen) * 5;
+      e.pos.x += (edx / elen) * e.speed;
+      e.pos.y += (edy / elen) * e.speed;
     }
+    // Random dash (roughly every 3 seconds)
+    e.chargeCooldown--;
+    if (e.chargeCooldown <= 0 && elen > 40 && elen < 200) {
+      e.chargeCooldown = 180;
+      e.chargeTimer = 30; // 0.5 sec
+      e.chargeVel = { x: (edx / elen) * 8, y: (edy / elen) * 8 };
+    }
+  }
+  if (elen < 16 && p.invincibleTimer <= 0) {
+    damagePlayer(g, 2);
+    if (elen > 0) { p.vel.x = -(edx / elen) * 6; p.vel.y = -(edy / elen) * 6; }
   }
 }
 
@@ -744,7 +1060,44 @@ function updateSniper(g: GameData, e: Enemy, p: Player, edx: number, edy: number
         pos: { x: e.pos.x, y: e.pos.y },
         vel: { x: (edx / elen) * ENEMY_PROJ_SPEED, y: (edy / elen) * ENEMY_PROJ_SPEED },
         alive: true, type: 'enemy', damage: 1, piercing: false, chainRadius: 0, hasChained: false,
+        travelDist: 0, wobblePhase: 0, growSize: 6, zigzagDir: 1, baseAngle: 0,
       });
+    }
+  }
+}
+
+function updateEvolvedSniper(g: GameData, e: Enemy, p: Player, edx: number, edy: number, elen: number) {
+  // Void Sniper - lead aims, fires 2 projectiles
+  if (elen < SNIPER_KEEP_DIST_MIN && elen > 0) {
+    e.pos.x -= (edx / elen) * e.speed * 1.5;
+    e.pos.y -= (edy / elen) * e.speed * 1.5;
+  } else if (elen > SNIPER_KEEP_DIST_MAX && elen > 0) {
+    e.pos.x += (edx / elen) * e.speed;
+    e.pos.y += (edy / elen) * e.speed;
+  }
+  e.shootTimer -= 16.67;
+  if (e.shootTimer <= 0) {
+    e.shootTimer = SNIPER_FIRE_INTERVAL;
+    if (elen > 0) {
+      // Lead aim: predict player position
+      const predTime = elen / 6; // frames to reach
+      const predX = p.pos.x + p.vel.x * predTime * 0.5;
+      const predY = p.pos.y + p.vel.y * predTime * 0.5;
+      const pdx = predX - e.pos.x;
+      const pdy = predY - e.pos.y;
+      const plen = Math.sqrt(pdx * pdx + pdy * pdy);
+      const baseAngle = Math.atan2(pdy, pdx);
+      const projSpeed = 6;
+      // 2 projectiles in slight spread
+      for (const offset of [-0.1, 0.1]) {
+        const a = baseAngle + offset;
+        g.projectiles.push({
+          pos: { x: e.pos.x, y: e.pos.y },
+          vel: { x: Math.cos(a) * projSpeed, y: Math.sin(a) * projSpeed },
+          alive: true, type: 'enemy', damage: 1, piercing: false, chainRadius: 0, hasChained: false,
+          travelDist: 0, wobblePhase: 0, growSize: 6, zigzagDir: 1, baseAngle: a,
+        });
+      }
     }
   }
 }
@@ -757,10 +1110,7 @@ function updateTitan(g: GameData, e: Enemy, p: Player, edx: number, edy: number,
   if (elen < 20 && p.invincibleTimer <= 0) {
     damagePlayer(g, 2);
     g.screenShakeIntensity = Math.max(g.screenShakeIntensity, 15);
-    if (elen > 0) {
-      p.vel.x = -(edx / elen) * 8;
-      p.vel.y = -(edy / elen) * 8;
-    }
+    if (elen > 0) { p.vel.x = -(edx / elen) * 8; p.vel.y = -(edy / elen) * 8; }
   }
 }
 
@@ -768,15 +1118,9 @@ function updateFogWeaver(g: GameData, e: Enemy, p: Player, edx: number, edy: num
   e.repositionTimer--;
   if (e.repositionTimer <= 0) {
     e.repositionTimer = 180;
-    // Spawn fog zone at current position
     g.fogZones.push({
-      pos: { x: e.pos.x, y: e.pos.y },
-      radius: 80,
-      maxRadius: 120,
-      life: 300, // 5 seconds
-      maxLife: 300,
+      pos: { x: e.pos.x, y: e.pos.y }, radius: 80, maxRadius: 120, life: 300, maxLife: 300,
     });
-    // Pick new target (random within arena)
     const targetX = g.borderSize + 50 + Math.random() * (g.arenaWidth - g.borderSize * 2 - 100);
     const targetY = g.borderSize + 50 + Math.random() * (g.arenaHeight - g.borderSize * 2 - 100);
     const tdx = targetX - e.pos.x;
@@ -787,36 +1131,51 @@ function updateFogWeaver(g: GameData, e: Enemy, p: Player, edx: number, edy: num
       e.pos.y += (tdy / tlen) * Math.min(tlen, e.speed * 60);
     }
   }
-  // Slow drift toward player
   if (elen > 100 && elen > 0) {
     e.pos.x += (edx / elen) * e.speed * 0.3;
     e.pos.y += (edy / elen) * e.speed * 0.3;
   }
-  if (elen < 16 && p.invincibleTimer <= 0) {
-    damagePlayer(g, 1);
+  if (elen < 16 && p.invincibleTimer <= 0) damagePlayer(g, 1);
+}
+
+function updateEvolvedFogWeaver(g: GameData, e: Enemy, p: Player, edx: number, edy: number, elen: number) {
+  // Miasma Weaver - faster reposition, larger fog, stacks
+  e.repositionTimer--;
+  if (e.repositionTimer <= 0) {
+    e.repositionTimer = 90; // 1.5 sec
+    g.fogZones.push({
+      pos: { x: e.pos.x, y: e.pos.y }, radius: 80, maxRadius: 160, life: 360, maxLife: 360,
+    });
+    const targetX = g.borderSize + 50 + Math.random() * (g.arenaWidth - g.borderSize * 2 - 100);
+    const targetY = g.borderSize + 50 + Math.random() * (g.arenaHeight - g.borderSize * 2 - 100);
+    const tdx = targetX - e.pos.x;
+    const tdy = targetY - e.pos.y;
+    const tlen = Math.sqrt(tdx * tdx + tdy * tdy);
+    if (tlen > 0) {
+      e.pos.x += (tdx / tlen) * Math.min(tlen, e.speed * 80);
+      e.pos.y += (tdy / tlen) * Math.min(tlen, e.speed * 80);
+    }
   }
+  if (elen > 100 && elen > 0) {
+    e.pos.x += (edx / elen) * e.speed * 0.3;
+    e.pos.y += (edy / elen) * e.speed * 0.3;
+  }
+  if (elen < 16 && p.invincibleTimer <= 0) damagePlayer(g, 1);
 }
 
 function updateBoss(g: GameData, e: Enemy, p: Player, edx: number, edy: number, elen: number) {
   const hpPct = e.hp / e.maxHp;
-
-  // Determine phase
   if (hpPct > 0.66) e.bossPhase = 1;
   else if (hpPct > 0.33) e.bossPhase = 2;
   else e.bossPhase = 3;
 
   const speedMult = e.bossPhase >= 2 ? 1.3 : 1;
 
-  // Charging behavior (phase 3)
   if (e.isCharging) {
     e.pos.x += e.chargeVel.x;
     e.pos.y += e.chargeVel.y;
     e.chargeTimer--;
-    if (e.chargeTimer <= 0) {
-      e.isCharging = false;
-      e.chargeCooldown = 300;
-    }
-    // Damage player during charge
+    if (e.chargeTimer <= 0) { e.isCharging = false; e.chargeCooldown = 300; }
     if (elen < 20 && p.invincibleTimer <= 0) {
       damagePlayer(g, 2);
       g.screenShakeIntensity = 20;
@@ -824,19 +1183,16 @@ function updateBoss(g: GameData, e: Enemy, p: Player, edx: number, edy: number, 
     return;
   }
 
-  // Move toward player
   if (elen > 50 && elen > 0) {
     e.pos.x += (edx / elen) * e.speed * speedMult;
     e.pos.y += (edy / elen) * e.speed * speedMult;
   }
 
-  // Contact damage
   if (elen < 20 && p.invincibleTimer <= 0) {
     damagePlayer(g, 2);
     g.screenShakeIntensity = 15;
   }
 
-  // Shooting
   e.shootTimer -= 16.67;
   if (e.shootTimer <= 0) {
     const spreadCount = e.bossPhase === 1 ? 3 : e.bossPhase === 2 ? 5 : 8;
@@ -846,38 +1202,31 @@ function updateBoss(g: GameData, e: Enemy, p: Player, edx: number, edy: number, 
     const isRing = e.bossPhase === 3;
     for (let i = 0; i < spreadCount; i++) {
       let angle: number;
-      if (isRing) {
-        angle = (Math.PI * 2 / spreadCount) * i;
-      } else {
-        const spread = 0.3;
-        angle = baseAngle + (i - (spreadCount - 1) / 2) * spread;
-      }
+      if (isRing) { angle = (Math.PI * 2 / spreadCount) * i; }
+      else { angle = baseAngle + (i - (spreadCount - 1) / 2) * 0.3; }
       g.projectiles.push({
         pos: { x: e.pos.x, y: e.pos.y },
         vel: { x: Math.cos(angle) * 3.5, y: Math.sin(angle) * 3.5 },
         alive: true, type: 'enemy', damage: 1, piercing: false, chainRadius: 0, hasChained: false,
+        travelDist: 0, wobblePhase: 0, growSize: 6, zigzagDir: 1, baseAngle: angle,
       });
     }
     g.soundEvents.push('bossShoot');
   }
 
-  // Phase 2: spawn rushers
   if (e.bossPhase >= 2) {
     e.spawnCooldown -= 1;
     if (e.spawnCooldown <= 0) {
       e.spawnCooldown = 480;
-      for (let i = 0; i < 2; i++) {
-        g.enemies.push(createEnemy(g, 1.6, 'rusher'));
-      }
+      for (let i = 0; i < 2; i++) g.enemies.push(createEnemy(g, 1.6, 'rusher'));
     }
   }
 
-  // Phase 3: charge
   if (e.bossPhase === 3) {
     e.chargeCooldown--;
     if (e.chargeCooldown <= 0 && elen > 0) {
       e.isCharging = true;
-      e.chargeTimer = 30; // 0.5s
+      e.chargeTimer = 30;
       e.chargeVel = { x: (edx / elen) * e.speed * 3, y: (edy / elen) * e.speed * 3 };
       g.soundEvents.push('bossCharge');
     }
@@ -893,26 +1242,37 @@ function damagePlayer(g: GameData, amount: number) {
   p.purpleFlashTimer = 16;
   g.screenShakeIntensity = Math.max(g.screenShakeIntensity, 12);
   g.soundEvents.push('playerDamage');
-  if (p.hp <= 0) {
-    p.alive = false;
-    p.deathTimer = 0;
-  }
+  if (p.hp <= 0) { p.alive = false; p.deathTimer = 0; }
 }
 
-function killEnemy(g: GameData, e: Enemy) {
+function killEnemy(g: GameData, e: Enemy, wasEvolving = false) {
   if (!e.alive) return;
   e.alive = false;
-  g.score++;
+  
+  // Score: evolved = 2.5x, evolving (intercepted) = 3x
+  let scoreVal = 1;
+  if (wasEvolving) {
+    scoreVal = 3;
+    g.comboPopups.push({ pos: { x: e.pos.x, y: e.pos.y - 15 }, text: 'INTERCEPTED', color: '#ffd700', life: 72, maxLife: 72 });
+  } else if (e.evolved) {
+    scoreVal = 2.5;
+  }
+  g.score += Math.ceil(scoreVal);
 
   if (e.type === 'rusher') {
-    g.screenShakeIntensity = Math.max(g.screenShakeIntensity, 5);
-    for (let i = 0; i < 8; i++) {
-      addParticle(g, e.pos.x, e.pos.y, ['#8b2500', '#aa3300', '#ff3333'][Math.floor(Math.random() * 3)], 2.5);
+    g.screenShakeIntensity = Math.max(g.screenShakeIntensity, e.evolved ? 8 : 5);
+    const count = e.evolved ? 12 : 8;
+    for (let i = 0; i < count; i++) {
+      addParticle(g, e.pos.x, e.pos.y, e.evolved ? ['#440000', '#880000', '#cc0000'][Math.floor(Math.random() * 3)] : ['#8b2500', '#aa3300', '#ff3333'][Math.floor(Math.random() * 3)], e.evolved ? 3 : 2.5);
     }
     g.soundEvents.push('enemyDeathRusher');
   } else if (e.type === 'sniper') {
     for (let i = 0; i < 12; i++) {
-      addParticle(g, e.pos.x, e.pos.y, ['#00ff44', '#00cc33', '#44ff88'][Math.floor(Math.random() * 3)], 2.5, 0.6, 1.5);
+      addParticle(g, e.pos.x, e.pos.y, e.evolved ? ['#220044', '#440088', '#ffffff'][Math.floor(Math.random() * 3)] : ['#00ff44', '#00cc33', '#44ff88'][Math.floor(Math.random() * 3)], 2.5, 0.6, 1.5);
+    }
+    // Void Sniper death: void patch
+    if (e.evolved) {
+      g.toxicPuddles.push({ pos: { x: e.pos.x, y: e.pos.y }, life: 120, radius: 40 });
     }
     g.soundEvents.push('enemyDeathRusher');
   } else if (e.type === 'titan') {
@@ -922,10 +1282,14 @@ function killEnemy(g: GameData, e: Enemy) {
     }
     g.soundEvents.push('enemyDeathTitan');
   } else if (e.type === 'fogWeaver') {
-    // Lingering fog
-    g.fogZones.push({ pos: { x: e.pos.x, y: e.pos.y }, radius: 60, maxRadius: 60, life: 120, maxLife: 120 });
+    // Evolved: massive fog burst
+    if (e.evolved) {
+      g.fogZones.push({ pos: { x: g.arenaWidth / 2, y: g.arenaHeight / 2 }, radius: 400, maxRadius: 400, life: 180, maxLife: 180 });
+    } else {
+      g.fogZones.push({ pos: { x: e.pos.x, y: e.pos.y }, radius: 60, maxRadius: 60, life: 120, maxLife: 120 });
+    }
     for (let i = 0; i < 10; i++) {
-      addParticle(g, e.pos.x, e.pos.y, ['#336666', '#448888', '#aacccc'][Math.floor(Math.random() * 3)], 2, 0.4, 2);
+      addParticle(g, e.pos.x, e.pos.y, e.evolved ? ['#220044', '#330066', '#aa88cc'][Math.floor(Math.random() * 3)] : ['#336666', '#448888', '#aacccc'][Math.floor(Math.random() * 3)], 2, 0.4, 2);
     }
     g.soundEvents.push('enemyDeathRusher');
   } else if (e.type === 'boss') {
@@ -936,6 +1300,16 @@ function killEnemy(g: GameData, e: Enemy) {
     g.waveAnnounceText = 'HERALD SLAIN';
     g.waveAnnounceTimer = 180;
     g.soundEvents.push('bossDeath');
+
+    // Dark flame spreads on death
+    if (e.darkFlame) {
+      for (const other of g.enemies) {
+        if (other === e || !other.alive) continue;
+        if (dist(e.pos, other.pos) < 60) {
+          other.darkFlame = { remaining: 360, tickTimer: 60 };
+        }
+      }
+    }
   }
 }
 
@@ -951,6 +1325,22 @@ function addParticle(g: GameData, x: number, y: number, color: string, size: num
     color,
     size,
   });
+}
+
+function addParticleReturn(g: GameData, x: number, y: number, color: string, size: number, speedMult = 1, lifeMult = 1): Particle | null {
+  if (g.particles.length >= MAX_PARTICLES) return null;
+  const angle = Math.random() * Math.PI * 2;
+  const speed = (Math.random() * 2 + 1) * speedMult;
+  const pt: Particle = {
+    pos: { x, y },
+    vel: { x: Math.cos(angle) * speed, y: Math.sin(angle) * speed },
+    life: Math.floor((Math.random() * 20 + 15) * lifeMult),
+    maxLife: Math.floor((Math.random() * 20 + 15) * lifeMult),
+    color,
+    size,
+  };
+  g.particles.push(pt);
+  return pt;
 }
 
 function updateSpores(g: GameData) {
@@ -985,11 +1375,8 @@ function resolveObstacleCollision(pos: Vec2, radius: number, obs: Obstacle) {
   const overlapX = halfW + radius - Math.abs(dx);
   const overlapY = halfH + radius - Math.abs(dy);
   if (overlapX > 0 && overlapY > 0) {
-    if (overlapX < overlapY) {
-      pos.x += dx > 0 ? overlapX : -overlapX;
-    } else {
-      pos.y += dy > 0 ? overlapY : -overlapY;
-    }
+    if (overlapX < overlapY) pos.x += dx > 0 ? overlapX : -overlapX;
+    else pos.y += dy > 0 ? overlapY : -overlapY;
   }
 }
 

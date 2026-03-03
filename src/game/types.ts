@@ -24,6 +24,44 @@ export interface FloorHazard {
   dirY: number;
 }
 
+export interface SporeStain {
+  pos: Vec2;
+  radius: number;
+  color: string;
+  opacity: number;
+  seed: number; // for irregular shape
+}
+
+export interface DamagePopup {
+  pos: Vec2;
+  text: string;
+  color: string;
+  life: number;
+  maxLife: number;
+}
+
+export type UpgradeId =
+  | 'swiftShadow' | 'phaseStep' | 'momentum' | 'ghostStep'
+  | 'sharpEdge' | 'rapidFire' | 'piercing' | 'overcharge' | 'volatile' | 'twinShot'
+  | 'bloodlust' | 'battleHardened' | 'umbrasWill' | 'darkHunger'
+  | 'ironWill' | 'resilience' | 'shadowCloak' | 'thornAura'
+  | 'emberMastery' | 'frostMastery' | 'stormMastery' | 'venomMastery' | 'gemEfficiency' | 'resonance';
+
+export type UpgradeRarity = 'common' | 'rare' | 'epic';
+
+export interface Upgrade {
+  id: UpgradeId;
+  name: string;
+  description: string;
+  rarity: UpgradeRarity;
+  color: string;
+}
+
+export interface UpgradeCard {
+  upgrade: Upgrade;
+  slideProgress: number;
+}
+
 export interface Player {
   pos: Vec2;
   vel: Vec2;
@@ -55,9 +93,17 @@ export interface Player {
   umbraModeCooldown: number;
   umbraAuraTick: number;
   lastCombatTick: number;
+  // Upgrades
+  upgrades: UpgradeId[];
+  shotCounter: number; // for overcharge
+  scoreMultiplier: number;
+  scoreMultiplierKills: number;
+  parryCount: number;
+  parryChainTimer: number;
+  parryTutorialShown: boolean;
 }
 
-export type EnemyType = 'rusher' | 'sniper' | 'titan' | 'fogWeaver' | 'boss';
+export type EnemyType = 'rusher' | 'sniper' | 'titan' | 'fogWeaver' | 'boss' | 'shieldRusher' | 'brute';
 
 export interface PoisonEffect {
   remaining: number;
@@ -87,12 +133,17 @@ export interface FrozenToxinEffect {
   tickTimer: number;
 }
 
+export interface StunEffect {
+  remaining: number;
+}
+
 export interface Enemy {
   pos: Vec2;
   hp: number;
   maxHp: number;
   alive: boolean;
   flashTimer: number;
+  flinchTimer: number;
   wobblePhase: number;
   speed: number;
   baseSpeed: number;
@@ -107,6 +158,7 @@ export interface Enemy {
   shadowMark: ShadowMarkEffect | null;
   darkFlame: DarkFlameEffect | null;
   frozenToxin: FrozenToxinEffect | null;
+  stun: StunEffect | null;
   fogZone: FogZone | null;
   repositionTimer: number;
   bossPhase: number;
@@ -125,6 +177,11 @@ export interface Enemy {
   camoTimer: number;
   isCamouflaged: boolean;
   teleportCooldown: number;
+  isBerserk: boolean;
+  // Shield
+  shieldAngle: number;
+  // Elite
+  isElite: boolean;
 }
 
 export interface Projectile {
@@ -142,6 +199,7 @@ export interface Projectile {
   zigzagDir: number;
   baseAngle: number;
   homing: boolean;
+  isParried: boolean;
 }
 
 export interface Particle {
@@ -207,7 +265,7 @@ export interface ComboPopup {
   maxLife: number;
 }
 
-export type GameState = 'start' | 'playing' | 'waveClear' | 'gameOver' | 'bossIntro' | 'gemUnlock';
+export type GameState = 'start' | 'playing' | 'waveClear' | 'gameOver' | 'bossIntro' | 'gemUnlock' | 'upgradeSelect';
 
 export interface GameData {
   state: GameState;
@@ -256,4 +314,17 @@ export interface GameData {
   controlsFlipped: boolean;
   controlsFlipTimer: number;
   frameTick: number;
+  // Hit stop
+  hitStopFrames: number;
+  // Stains
+  stains: SporeStain[];
+  // Damage popups
+  damagePopups: DamagePopup[];
+  // Upgrade system
+  upgradeCards: UpgradeCard[];
+  upgradeSelectTimer: number;
+  selectedUpgrade: number; // -1 = none selected
+  // Parry
+  parryFlashTimer: number;
+  parryText: string;
 }

@@ -1,5 +1,5 @@
 import { useRef, useEffect, useCallback } from 'react';
-import { createGame, update, startGame, setWeapon } from '@/game/engine';
+import { createGame, update, startGame, setWeapon, activateDash, activateUmbraMode } from '@/game/engine';
 import { render } from '@/game/renderer';
 import { resumeAudio, playSoundEvent } from '@/game/audio';
 import { GameData, WeaponType } from '@/game/types';
@@ -33,10 +33,14 @@ const GameCanvas = () => {
     gameRef.current = g;
 
     const weaponKeys: Record<string, WeaponType> = {
-      q: 'fire',
-      e: 'frost',
-      r: 'storm',
-      t: 'venom',
+      '1': 'fire',
+      '2': 'frost',
+      '3': 'storm',
+      '4': 'venom',
+      '5': 'void',
+      '6': 'terra',
+      '7': 'gale',
+      '8': 'flux',
     };
 
     const onKeyDown = (e: KeyboardEvent) => {
@@ -44,6 +48,12 @@ const GameCanvas = () => {
       g.keys[key] = true;
       if (weaponKeys[key]) {
         setWeapon(g, weaponKeys[key]);
+      }
+      if (key === 'q') {
+        activateDash(g);
+      }
+      if (key === 'f') {
+        activateUmbraMode(g);
       }
       e.preventDefault();
     };
@@ -80,7 +90,6 @@ const GameCanvas = () => {
     const loop = () => {
       if (!running) return;
       update(g, performance.now());
-      // Process sound events
       for (const evt of g.soundEvents) {
         playSoundEvent(evt);
       }

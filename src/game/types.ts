@@ -5,7 +5,24 @@ export interface Vec2 {
 
 export type AnimState = 'idle' | 'walk' | 'attack' | 'damage' | 'death';
 
-export type WeaponType = 'shadow' | 'fire' | 'frost' | 'storm' | 'venom';
+export type WeaponType = 'shadow' | 'fire' | 'frost' | 'storm' | 'venom' | 'void' | 'terra' | 'gale' | 'flux';
+
+export interface Afterimage {
+  pos: Vec2;
+  angle: number;
+  life: number;
+  maxLife: number;
+}
+
+export interface FloorHazard {
+  pos: Vec2;
+  radius: number;
+  life: number;
+  maxLife: number;
+  type: 'fire' | 'ice' | 'void' | 'wind';
+  dirX: number;
+  dirY: number;
+}
 
 export interface Player {
   pos: Vec2;
@@ -25,6 +42,19 @@ export interface Player {
   activeWeapon: WeaponType;
   gemsCollected: Record<WeaponType, boolean>;
   speedMultiplier: number;
+  // Dash
+  dashTimer: number;
+  dashCooldown: number;
+  isDashing: boolean;
+  dashDir: Vec2;
+  afterimages: Afterimage[];
+  // Conviction / Umbra Mode
+  conviction: number;
+  umbraMode: boolean;
+  umbraModeTimer: number;
+  umbraModeCooldown: number;
+  umbraAuraTick: number;
+  lastCombatTick: number;
 }
 
 export type EnemyType = 'rusher' | 'sniper' | 'titan' | 'fogWeaver' | 'boss';
@@ -77,22 +107,24 @@ export interface Enemy {
   shadowMark: ShadowMarkEffect | null;
   darkFlame: DarkFlameEffect | null;
   frozenToxin: FrozenToxinEffect | null;
-  // Fog weaver specifics
   fogZone: FogZone | null;
   repositionTimer: number;
-  // Boss specifics
   bossPhase: number;
   chargeTimer: number;
   chargeCooldown: number;
   chargeVel: Vec2;
   isCharging: boolean;
   spawnCooldown: number;
-  // Evolution
   evolutionTimer: number;
   evolved: boolean;
   evolving: boolean;
   evolvingTimer: number;
   evolutionWarning: boolean;
+  // Herald specifics
+  heraldType: number;
+  camoTimer: number;
+  isCamouflaged: boolean;
+  teleportCooldown: number;
 }
 
 export interface Projectile {
@@ -104,12 +136,12 @@ export interface Projectile {
   piercing: boolean;
   chainRadius: number;
   hasChained: boolean;
-  // New projectile fields
   travelDist: number;
   wobblePhase: number;
   growSize: number;
   zigzagDir: number;
   baseAngle: number;
+  homing: boolean;
 }
 
 export interface Particle {
@@ -220,4 +252,8 @@ export interface GameData {
   gemUnlockType: WeaponType | null;
   screenFlashTimer: number;
   screenFlashColor: string;
+  floorHazards: FloorHazard[];
+  controlsFlipped: boolean;
+  controlsFlipTimer: number;
+  frameTick: number;
 }

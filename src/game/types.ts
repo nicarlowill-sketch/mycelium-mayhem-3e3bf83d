@@ -29,7 +29,7 @@ export interface SporeStain {
   radius: number;
   color: string;
   opacity: number;
-  seed: number; // for irregular shape
+  seed: number;
 }
 
 export interface DamagePopup {
@@ -95,7 +95,7 @@ export interface Player {
   lastCombatTick: number;
   // Upgrades
   upgrades: UpgradeId[];
-  shotCounter: number; // for overcharge
+  shotCounter: number;
   scoreMultiplier: number;
   scoreMultiplierKills: number;
   parryCount: number;
@@ -172,15 +172,12 @@ export interface Enemy {
   evolving: boolean;
   evolvingTimer: number;
   evolutionWarning: boolean;
-  // Herald specifics
   heraldType: number;
   camoTimer: number;
   isCamouflaged: boolean;
   teleportCooldown: number;
   isBerserk: boolean;
-  // Shield
   shieldAngle: number;
-  // Elite
   isElite: boolean;
 }
 
@@ -188,7 +185,7 @@ export interface Projectile {
   pos: Vec2;
   vel: Vec2;
   alive: boolean;
-  type: WeaponType | 'enemy';
+  type: WeaponType | 'enemy' | 'holy';
   damage: number;
   piercing: boolean;
   chainRadius: number;
@@ -265,6 +262,57 @@ export interface ComboPopup {
   maxLife: number;
 }
 
+// ---- Co-op / Solus types ----
+export interface SolusPlayer {
+  pos: Vec2;
+  vel: Vec2;
+  angle: number;
+  hp: number;
+  maxHp: number;
+  invincibleTimer: number;
+  alive: boolean;
+  deathTimer: number;
+  flashTimer: number;
+  goldFlashTimer: number;
+  animState: AnimState;
+  animFrame: number;
+  animTick: number;
+  attackTimer: number;
+  speedMultiplier: number;
+  // Dash equivalent
+  dashTimer: number;
+  dashCooldown: number;
+  isDashing: boolean;
+  dashDir: Vec2;
+  afterimages: Afterimage[];
+  // Abilities
+  radiantBurstCooldown: number;
+  radiantBurstChanneling: number;
+  martyrShieldActive: boolean;
+  martyrShieldTimer: number;
+  martyrShieldCooldown: number;
+  martyrShieldDamageAbsorbed: number;
+  // Divine Reckoning (ultimate)
+  conviction: number;
+  divineReckoningActive: boolean;
+  divineReckoningTimer: number;
+  divineReckoningCooldown: number;
+  lastCombatTick: number;
+  // Co-op
+  collapsed: boolean;
+  collapseTimer: number;
+  reviveProgress: number;
+  revivesRemaining: number;
+  guardianTimer: number;
+  // Upgrades
+  upgrades: UpgradeId[];
+  shotCounter: number;
+  parryCount: number;
+  parryChainTimer: number;
+}
+
+export type CoopState = 'none' | 'lobby' | 'playing';
+
 export type GameState = 'start' | 'playing' | 'waveClear' | 'gameOver' | 'bossIntro' | 'gemUnlock' | 'upgradeSelect';
 
 export interface GameData {
@@ -314,17 +362,24 @@ export interface GameData {
   controlsFlipped: boolean;
   controlsFlipTimer: number;
   frameTick: number;
-  // Hit stop
   hitStopFrames: number;
-  // Stains
   stains: SporeStain[];
-  // Damage popups
   damagePopups: DamagePopup[];
-  // Upgrade system
   upgradeCards: UpgradeCard[];
   upgradeSelectTimer: number;
-  selectedUpgrade: number; // -1 = none selected
-  // Parry
+  selectedUpgrade: number;
   parryFlashTimer: number;
   parryText: string;
+  // Co-op
+  coopState: CoopState;
+  solus: SolusPlayer | null;
+  solusScore: number;
+  umbraRevivesRemaining: number;
+  umbraCollapsed: boolean;
+  umbraCollapseTimer: number;
+  umbraReviveProgress: number;
+  eclipseActive: boolean;
+  eclipseTimer: number;
+  // Solus last shot time
+  solusLastShotTime: number;
 }

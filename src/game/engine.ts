@@ -1,4 +1,4 @@
-import { GameData, Player, Enemy, Projectile, Particle, SporeParticle, FogPatch, FogZone, Vec2, Obstacle, WeaponType, ToxicPuddle, UpgradeId, Upgrade, UpgradeCard, UpgradeRarity, SporeStain } from './types';
+import { GameData, Player, Enemy, Projectile, Particle, SporeParticle, FogPatch, Vec2, Obstacle, WeaponType, UpgradeId, Upgrade, UpgradeCard, SolusPlayer } from './types';
 
 const PLAYER_SPEED = 3;
 const PLAYER_ACCEL = 0.15;
@@ -131,6 +131,17 @@ export function createGame(w: number, h: number): GameData {
     selectedUpgrade: -1,
     parryFlashTimer: 0,
     parryText: '',
+    // Co-op
+    coopState: 'none',
+    solus: null,
+    solusScore: 0,
+    umbraRevivesRemaining: 2,
+    umbraCollapsed: false,
+    umbraCollapseTimer: 0,
+    umbraReviveProgress: 0,
+    eclipseActive: false,
+    eclipseTimer: 0,
+    solusLastShotTime: 0,
   };
 }
 
@@ -183,6 +194,417 @@ function createPlayer(): Player {
     parryTutorialShown: false,
   };
 }
+
+function createSolus(): SolusPlayer {
+  return {
+    pos: { x: ARENA_W / 2 + 30, y: ARENA_H / 2 },
+    vel: { x: 0, y: 0 },
+    angle: 0,
+    hp: 6,
+    maxHp: 6,
+    invincibleTimer: 0,
+    alive: true,
+    deathTimer: 0,
+    flashTimer: 0,
+    goldFlashTimer: 0,
+    animState: 'idle',
+    animFrame: 0,
+    animTick: 0,
+    attackTimer: 0,
+    speedMultiplier: 1,
+    dashTimer: 0,
+    dashCooldown: 0,
+    isDashing: false,
+    dashDir: { x: 0, y: 0 },
+    afterimages: [],
+    radiantBurstCooldown: 0,
+    radiantBurstChanneling: 0,
+    martyrShieldActive: false,
+    martyrShieldTimer: 0,
+    martyrShieldCooldown: 0,
+    martyrShieldDamageAbsorbed: 0,
+    conviction: 0,
+    divineReckoningActive: false,
+    divineReckoningTimer: 0,
+    divineReckoningCooldown: 0,
+    lastCombatTick: 0,
+    collapsed: false,
+    collapseTimer: 0,
+    reviveProgress: 0,
+    revivesRemaining: 2,
+    guardianTimer: 0,
+    upgrades: [],
+    shotCounter: 0,
+    parryCount: 0,
+    parryChainTimer: 0,
+  };
+}
+
+export function enableCoop(g: GameData) {
+  g.coopState = 'playing';
+  g.solus = createSolus();
+}
+
+export function updateSolus(g: GameData, input: { keys: Record<string, boolean>; mousePos: Vec2; mouseDown: boolean; abilityQ: boolean; abilityE: boolean; ultimatePressed: boolean }) {
+  const s = g.solus;
+  if (!s || !s.alive) return;
+
+  // Movement
+  let dx = 0, dy = 0;
+  if (input.keys['w']) dy -= 1;
+  if (input.keys['s']) dy += 1;
+  if (input.keys['a']) dx -= 1;
+  if (input.keys['d']) dx += 1;
+
+  const effectiveSpeed = PLAYER_SPEED * s.speedMultiplier;
+  if (dx !== 0 || dy !== 0) {
+    const len = Math.sqrt(dx * dx + dy * dy);
+    dx /= len; dy /= len;
+    s.vel.x += (dx * effectiveSpeed - s.vel.x) * PLAYER_ACCEL;
+    s.vel.y += (dy * effectiveSpeed - s.vel.y) * PLAYER_ACCEL;
+  } else {
+    s.vel.x *= PLAYER_DECEL;
+    s.vel.y *= PLAYER_DECEL;
+  }
+  s.pos.x += s.vel.x;
+  s.pos.y += s.vel.y;
+
+  // Bounds
+  const brd = g.borderSize + 10;
+  s.pos.x = Math.max(brd, Math.min(g.arenaWidth - brd, s.pos.x));
+  s.pos.y = Math.max(brd, Math.min(g.arenaHeight - brd, s.pos.y));
+
+  // Aim
+  const worldMouseX = input.mousePos.x + g.camera.x;
+  const worldMouseY = input.mousePos.y + g.camera.y;
+  s.angle = Math.atan2(worldMouseY - s.pos.y, worldMouseX - s.pos.x);
+
+  // Animation
+  s.animTick++;
+  if (s.attackTimer > 0) { s.attackTimer--; s.animState = 'attack'; }
+  else {
+    const moving = Math.abs(s.vel.x) > 0.3 || Math.abs(s.vel.y) > 0.3;
+    s.animState = moving ? 'walk' : 'idle';
+  }
+  const frameRate = s.animState === 'idle' ? 15 : 8;
+  if (s.animTick >= frameRate) {
+    s.animTick = 0;
+    s.animFrame = (s.animFrame + 1) % 4;
+  }
+
+  // Timers
+  if (s.invincibleTimer > 0) s.invincibleTimer--;
+  if (s.flashTimer > 0) s.flashTimer--;
+  if (s.goldFlashTimer > 0) s.goldFlashTimer--;
+  if (s.dashCooldown > 0) s.dashCooldown--;
+  if (s.radiantBurstCooldown > 0) s.radiantBurstCooldown--;
+  if (s.martyrShieldCooldown > 0) s.martyrShieldCooldown--;
+  if (s.divineReckoningCooldown > 0) s.divineReckoningCooldown--;
+
+  // Martyr Shield timer
+  if (s.martyrShieldActive) {
+    s.martyrShieldTimer--;
+    if (s.martyrShieldTimer <= 0) {
+      s.martyrShieldActive = false;
+      s.martyrShieldCooldown = 600;
+    }
+  }
+
+  // Divine Reckoning
+  if (s.divineReckoningActive) {
+    s.divineReckoningTimer--;
+    // Auto-fire holy bolts in 8 directions
+    if (g.frameTick % 6 === 0) {
+      for (let i = 0; i < 8; i++) {
+        const angle = (Math.PI * 2 / 8) * i;
+        g.projectiles.push(createProjectile(
+          { x: s.pos.x + Math.cos(angle) * 12, y: s.pos.y + Math.sin(angle) * 12 },
+          { x: Math.cos(angle) * 8, y: Math.sin(angle) * 8 },
+          'holy', 1.5, { piercing: true }
+        ));
+      }
+    }
+    // Holy aura damage
+    if (g.frameTick % 30 === 0) {
+      for (const e of g.enemies) {
+        if (!e.alive) continue;
+        if (dist(s.pos, e.pos) < 60) {
+          e.hp -= 0.5;
+          e.flashTimer = 2;
+          if (e.hp <= 0) killEnemy(g, e);
+        }
+      }
+    }
+    if (s.divineReckoningTimer <= 0) {
+      s.divineReckoningActive = false;
+      s.conviction = 0;
+      s.divineReckoningCooldown = 300;
+    }
+  }
+
+  // Shooting - Holy Bolt
+  if (input.mouseDown && !s.isDashing && !s.divineReckoningActive) {
+    const now = performance.now();
+    if (now - g.solusLastShotTime > 286) { // 3.5 shots/sec
+      g.solusLastShotTime = now;
+      const cos = Math.cos(s.angle);
+      const sin = Math.sin(s.angle);
+      g.projectiles.push(createProjectile(
+        { x: s.pos.x + cos * 12, y: s.pos.y + sin * 12 },
+        { x: cos * 8, y: sin * 8 },
+        'holy', 1.5, { piercing: true }
+      ));
+      s.attackTimer = 8;
+      s.lastCombatTick = g.frameTick;
+    }
+  }
+
+  // Radiant Burst (Q)
+  if (input.abilityQ && s.radiantBurstCooldown <= 0 && !s.divineReckoningActive) {
+    s.radiantBurstCooldown = 480; // 8 seconds
+    // AoE blast
+    for (const e of g.enemies) {
+      if (!e.alive) continue;
+      if (dist(s.pos, e.pos) < 150) {
+        e.hp -= 3;
+        e.stun = { remaining: 150 }; // 2.5 second blind/stun
+        e.flashTimer = 8;
+        if (e.hp <= 0) killEnemy(g, e);
+      }
+    }
+    g.screenFlashTimer = 6;
+    g.screenFlashColor = '#ffffff';
+    g.screenShakeIntensity = Math.max(g.screenShakeIntensity, 12);
+    for (let i = 0; i < 20; i++) addParticle(g, s.pos.x, s.pos.y, Math.random() > 0.5 ? '#ffffff' : '#ffd700', 3, 1.5, 1);
+    // Conviction gain
+    s.conviction = Math.min(100, s.conviction + 10);
+  }
+
+  // Martyr Shield (E)
+  if (input.abilityE && s.martyrShieldCooldown <= 0 && !s.martyrShieldActive) {
+    s.martyrShieldActive = true;
+    s.martyrShieldTimer = 240; // 4 seconds
+    s.martyrShieldDamageAbsorbed = 0;
+  }
+
+  // Divine Reckoning (F)
+  if (input.ultimatePressed && s.conviction >= 100 && !s.divineReckoningActive && s.divineReckoningCooldown <= 0) {
+    s.divineReckoningActive = true;
+    s.divineReckoningTimer = 360; // 6 seconds
+    g.screenFlashTimer = 8;
+    g.screenFlashColor = '#ffd700';
+    g.waveAnnounceText = 'DIVINE RECKONING';
+    g.waveAnnounceTimer = 60;
+  }
+
+  // Guardian synergy - Solus near Umbra
+  if (dist(s.pos, g.player.pos) < 60) {
+    s.guardianTimer++;
+  } else {
+    s.guardianTimer = 0;
+  }
+
+  // Revive Umbra
+  if (g.umbraCollapsed && dist(s.pos, g.player.pos) < 40 && s.alive) {
+    g.umbraReviveProgress += 1 / 180; // 3 seconds
+    if (g.umbraReviveProgress >= 1) {
+      g.umbraCollapsed = false;
+      g.umbraReviveProgress = 0;
+      g.player.alive = true;
+      g.player.hp = 2;
+      g.player.invincibleTimer = 120;
+      g.player.flashTimer = 20;
+      g.umbraRevivesRemaining--;
+      s.conviction = Math.min(100, s.conviction + 15);
+      for (let i = 0; i < 12; i++) addParticle(g, g.player.pos.x, g.player.pos.y, '#ffd700', 2, 1, 1);
+    }
+  }
+
+  // Eclipse check
+  if (g.player.umbraMode && s.divineReckoningActive && !g.eclipseActive) {
+    g.eclipseActive = true;
+    g.eclipseTimer = Math.min(g.player.umbraModeTimer, s.divineReckoningTimer);
+    g.waveAnnounceText = 'ECLIPSE';
+    g.waveAnnounceTimer = 90;
+    g.screenFlashTimer = 10;
+    g.screenFlashColor = '#ffd700';
+    for (const e of g.enemies) {
+      if (e.alive) {
+        e.stun = { remaining: 120 };
+        e.slow = { remaining: 120 };
+      }
+    }
+  }
+  if (g.eclipseActive) {
+    g.eclipseTimer--;
+    if (g.eclipseTimer <= 0 || (!g.player.umbraMode && !s.divineReckoningActive)) {
+      g.eclipseActive = false;
+    }
+  }
+
+  // Afterimage decay
+  for (const ai of s.afterimages) ai.life--;
+  s.afterimages = s.afterimages.filter(ai => ai.life > 0);
+
+  // Enemy contact damage to Solus
+  for (const e of g.enemies) {
+    if (!e.alive) continue;
+    const edist = dist(s.pos, e.pos);
+    if (edist < 16 && s.invincibleTimer <= 0) {
+      if (s.martyrShieldActive) {
+        // Shield absorbs
+        s.martyrShieldActive = false;
+        s.martyrShieldDamageAbsorbed = e.type === 'titan' || e.type === 'brute' ? 2 : 1;
+        const aoeRadius = 80;
+        const aoeDmg = Math.min(5, 2 + s.martyrShieldDamageAbsorbed);
+        for (const other of g.enemies) {
+          if (!other.alive) continue;
+          if (dist(s.pos, other.pos) < aoeRadius) {
+            other.hp -= aoeDmg;
+            other.flashTimer = 6;
+            if (other.hp <= 0) killEnemy(g, other);
+          }
+        }
+        g.screenFlashTimer = 4;
+        g.screenFlashColor = '#ffd700';
+        for (let i = 0; i < 12; i++) addParticle(g, s.pos.x, s.pos.y, '#ffd700', 2, 1.5, 0.5);
+        s.martyrShieldCooldown = 600;
+      } else {
+        s.hp -= (e.type === 'titan' || e.type === 'brute' || e.type === 'boss') ? 2 : 1;
+        s.invincibleTimer = INVINCIBLE_DURATION;
+        s.flashTimer = 8;
+        s.goldFlashTimer = 16;
+        g.screenShakeIntensity = Math.max(g.screenShakeIntensity, 8);
+        s.conviction = Math.min(100, s.conviction + 8);
+        if (s.hp <= 0) {
+          if (s.revivesRemaining > 0) {
+            s.collapsed = true;
+            s.collapseTimer = 0;
+            s.reviveProgress = 0;
+            s.alive = false;
+          } else {
+            s.alive = false;
+            s.deathTimer = 0;
+          }
+        }
+      }
+      break;
+    }
+  }
+
+  // Enemy projectile damage to Solus
+  for (const proj of g.projectiles) {
+    if (!proj.alive || proj.type !== 'enemy' || proj.isParried) continue;
+    if (dist(proj.pos, s.pos) < 12 && s.invincibleTimer <= 0) {
+      proj.alive = false;
+      if (s.martyrShieldActive) {
+        s.martyrShieldActive = false;
+        s.martyrShieldDamageAbsorbed = proj.damage;
+        const aoeDmg = Math.min(5, 2 + proj.damage);
+        for (const e of g.enemies) {
+          if (!e.alive) continue;
+          if (dist(s.pos, e.pos) < 80) {
+            e.hp -= aoeDmg;
+            e.flashTimer = 6;
+            if (e.hp <= 0) killEnemy(g, e);
+          }
+        }
+        g.screenFlashTimer = 4;
+        g.screenFlashColor = '#ffd700';
+        s.martyrShieldCooldown = 600;
+      } else {
+        s.hp -= proj.damage;
+        s.invincibleTimer = INVINCIBLE_DURATION;
+        s.flashTimer = 8;
+        s.conviction = Math.min(100, s.conviction + 8);
+        if (s.hp <= 0) {
+          if (s.revivesRemaining > 0) {
+            s.collapsed = true;
+            s.alive = false;
+          } else {
+            s.alive = false;
+            s.deathTimer = 0;
+          }
+        }
+      }
+    }
+  }
+
+  // Revive Solus by Umbra
+  if (s.collapsed && !s.alive && g.player.alive && dist(g.player.pos, s.pos) < 40) {
+    s.reviveProgress += 1 / 180;
+    if (s.reviveProgress >= 1) {
+      s.collapsed = false;
+      s.alive = true;
+      s.hp = 2;
+      s.invincibleTimer = 120;
+      s.flashTimer = 20;
+      s.revivesRemaining--;
+      s.reviveProgress = 0;
+      for (let i = 0; i < 12; i++) addParticle(g, s.pos.x, s.pos.y, '#9b30ff', 2, 1, 1);
+    }
+  }
+
+  // Holy projectile hits
+  for (const proj of g.projectiles) {
+    if (!proj.alive || proj.type !== 'holy') continue;
+    for (const e of g.enemies) {
+      if (!e.alive) continue;
+      const hitR = e.type === 'boss' ? 18 : 14;
+      if (dist(proj.pos, e.pos) < hitR) {
+        const dmg = g.eclipseActive ? proj.damage * 3 : proj.damage;
+        e.hp -= dmg;
+        e.flashTimer = 6;
+        e.flinchTimer = 2;
+        s.lastCombatTick = g.frameTick;
+        s.conviction = Math.min(100, s.conviction + 2);
+        addDamagePopup(g, proj.pos.x, proj.pos.y, dmg, '#ffd700');
+        g.hitStopFrames = Math.max(g.hitStopFrames, e.type === 'boss' ? 5 : 3);
+        for (let i = 0; i < 3; i++) addParticle(g, proj.pos.x, proj.pos.y, '#ffd700', 1.5, 0.8, 0.2);
+
+        // Shadow Light combo check
+        if (e.shadowMark) {
+          // Shadow + Holy = RESONANCE
+          e.hp -= 2;
+          g.comboPopups.push({ pos: { x: e.pos.x, y: e.pos.y - 20 }, text: 'RESONANCE', color: '#ffd700', life: 72, maxLife: 72 });
+          for (let i = 0; i < 8; i++) addParticle(g, e.pos.x, e.pos.y, Math.random() > 0.5 ? '#9b30ff' : '#ffd700', 2, 1, 1);
+        }
+
+        if (!proj.piercing) proj.alive = false;
+        else proj.hasChained = true;
+        if (proj.piercing && proj.hasChained) proj.alive = false;
+
+        if (e.hp <= 0) {
+          killEnemy(g, e);
+          g.solusScore++;
+        }
+        break;
+      }
+    }
+  }
+
+  // Co-op game over check
+  if (!s.alive && !s.collapsed && !g.player.alive && !g.umbraCollapsed) {
+    g.state = 'gameOver';
+  }
+  if (s.collapsed && g.umbraCollapsed) {
+    g.state = 'gameOver';
+  }
+}
+
+// Co-op enemy scaling
+export function getCoopHpMultiplier(g: GameData): number {
+  return g.coopState === 'playing' ? 1.5 : 1;
+}
+
+export function getCoopBossHpMultiplier(g: GameData): number {
+  return g.coopState === 'playing' ? 1.8 : 1;
+}
+
+export function getCoopEnemyCountMultiplier(g: GameData): number {
+  return g.coopState === 'playing' ? 1.4 : 1;
+}
+
 
 function createObstacles(): Obstacle[] {
   const obs: Obstacle[] = [];
@@ -257,6 +679,16 @@ export function startGame(g: GameData) {
   g.selectedUpgrade = -1;
   g.parryFlashTimer = 0;
   g.soundEvents = [];
+  g.eclipseActive = false;
+  g.eclipseTimer = 0;
+  g.solusLastShotTime = 0;
+  g.umbraCollapsed = false;
+  g.umbraCollapseTimer = 0;
+  g.umbraReviveProgress = 0;
+  g.umbraRevivesRemaining = 2;
+  if (g.coopState === 'playing') {
+    g.solus = createSolus();
+  }
   startNextWave(g);
 }
 
@@ -425,7 +857,7 @@ function createEnemy(g: GameData, speed: number, type: Enemy['type']): Enemy {
   };
 }
 
-function createProjectile(pos: Vec2, vel: Vec2, type: WeaponType | 'enemy', damage: number, opts: Partial<Projectile> = {}): Projectile {
+function createProjectile(pos: Vec2, vel: Vec2, type: WeaponType | 'enemy' | 'holy', damage: number, opts: Partial<Projectile> = {}): Projectile {
   return {
     pos: { ...pos }, vel: { ...vel }, alive: true, type, damage,
     piercing: false, chainRadius: 0, hasChained: false, travelDist: 0,
@@ -642,14 +1074,31 @@ export function update(g: GameData, now: number) {
       for (let i = 0; i < 25; i++) addParticle(g, p.pos.x, p.pos.y, '#9b30ff', 3);
       g.soundEvents.push('playerDeath');
     }
-    if (p.deathTimer > 90) {
-      g.state = 'gameOver';
-      if (g.wavesCleared > g.bestWave) {
-        g.bestWave = g.wavesCleared;
-        localStorage.setItem('mm_bestWave', String(g.bestWave));
+    // Co-op: collapse instead of instant death
+    if (g.coopState === 'playing' && g.umbraRevivesRemaining > 0 && !g.umbraCollapsed) {
+      g.umbraCollapsed = true;
+      g.umbraCollapseTimer = 0;
+      g.umbraReviveProgress = 0;
+    } else if (p.deathTimer > 90) {
+      if (g.coopState === 'playing') {
+        // Only game over if Solus also dead
+        if (!g.solus || !g.solus.alive) {
+          g.state = 'gameOver';
+          if (g.wavesCleared > g.bestWave) {
+            g.bestWave = g.wavesCleared;
+            localStorage.setItem('mm_bestWave', String(g.bestWave));
+          }
+        }
+      } else {
+        g.state = 'gameOver';
+        if (g.wavesCleared > g.bestWave) {
+          g.bestWave = g.wavesCleared;
+          localStorage.setItem('mm_bestWave', String(g.bestWave));
+        }
       }
     }
-    return;
+    if (g.coopState !== 'playing' || (g.umbraCollapsed && (!g.solus || !g.solus.alive))) return;
+    if (!p.alive && !g.umbraCollapsed) return;
   }
 
   // Controls flip timer
@@ -1299,6 +1748,19 @@ export function update(g: GameData, now: number) {
         }
       }
     }
+  }
+
+  // Update Solus in co-op
+  if (g.coopState === 'playing' && g.solus) {
+    // Solus is updated externally via updateSolus() called from GameCanvas
+  }
+
+  // Holy projectile movement
+  for (const proj of g.projectiles) {
+    if (!proj.alive || proj.type !== 'holy') continue;
+    proj.pos.x += proj.vel.x;
+    proj.pos.y += proj.vel.y;
+    if (Math.random() < 0.4) addParticle(g, proj.pos.x, proj.pos.y, '#ffd700', 1, 0.2, 0.3);
   }
 
   // Clean up

@@ -1,4 +1,4 @@
-import { GameData, Enemy, Player, WeaponType, Projectile, UpgradeRarity, SolusPlayer } from './types';
+import { GameData, Enemy, Player, WeaponType, Projectile, UpgradeRarity, SolusPlayer, DyingProjectile } from './types';
 /* eslint-disable @typescript-eslint/no-unused-vars */
 
 const HERALD_NAMES: Record<number, string> = {
@@ -100,6 +100,44 @@ export function render(ctx: CanvasRenderingContext2D, g: GameData) {
   ctx.globalAlpha = 1;
 
   if (g.gemPickup && !g.gemPickup.collected) drawGemPickup(ctx, g.gemPickup.pos.x, g.gemPickup.pos.y, g.gemPickup.pulse, g.gemPickup.gemType);
+
+  // Heart pickup
+  if (g.heartPickup && !g.heartPickup.collected) {
+    const hp = g.heartPickup;
+    const hx = Math.floor(hp.pos.x), hy = Math.floor(hp.pos.y);
+    const pulse = 1 + Math.sin(hp.pulse) * 0.15;
+    const warningPulse = hp.life <= 120 ? (Math.sin(Date.now() * 0.02) > 0 ? 0.5 : 1) : 1;
+    ctx.save(); ctx.translate(hx, hy - 2); ctx.scale(pulse, pulse); ctx.globalAlpha = warningPulse;
+    // Heart shape
+    ctx.fillStyle = '#ff2244'; ctx.shadowColor = '#ff2244'; ctx.shadowBlur = 12;
+    ctx.beginPath();
+    ctx.moveTo(0, 2);
+    ctx.bezierCurveTo(-5, -2, -7, -5, -4, -7);
+    ctx.bezierCurveTo(-1, -9, 0, -6, 0, -4);
+    ctx.bezierCurveTo(0, -6, 1, -9, 4, -7);
+    ctx.bezierCurveTo(7, -5, 5, -2, 0, 2);
+    ctx.fill();
+    // Inner glow
+    ctx.fillStyle = '#ff6688'; ctx.shadowBlur = 0;
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.bezierCurveTo(-2, -2, -3, -4, -2, -5);
+    ctx.bezierCurveTo(-1, -6, 0, -4, 0, -3);
+    ctx.bezierCurveTo(0, -4, 1, -6, 2, -5);
+    ctx.bezierCurveTo(3, -4, 2, -2, 0, 0);
+    ctx.fill();
+    ctx.shadowBlur = 0; ctx.globalAlpha = 1; ctx.restore();
+  }
+
+  // Dying projectiles (flash + dissolve)
+  for (const dp of g.dyingProjectiles) {
+    const alpha = dp.life / dp.maxLife;
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = '#ffffff'; ctx.shadowColor = '#ffffff'; ctx.shadowBlur = 6;
+    ctx.beginPath(); ctx.arc(Math.floor(dp.pos.x), Math.floor(dp.pos.y), 3 * alpha, 0, Math.PI * 2); ctx.fill();
+    ctx.shadowBlur = 0;
+  }
+  ctx.globalAlpha = 1;
 
   for (const proj of g.projectiles) drawProjectile(ctx, proj);
 
@@ -496,8 +534,8 @@ function renderGemUnlock(ctx: CanvasRenderingContext2D, g: GameData) {
     void: 'VOID', terra: 'TERRA', gale: 'GALE', flux: 'FLUX',
   };
   const keyMap: Record<WeaponType, string> = {
-    shadow: 'Click', fire: '1', frost: '2', storm: '3', venom: '4',
-    void: '5', terra: '6', gale: '7', flux: '8',
+    shadow: '1', fire: '2', frost: '3', storm: '4', venom: '5',
+    void: '6', terra: '7', gale: '8', flux: '9',
   };
   const color = colorMap[gt];
   const progress = 1 - g.gemUnlockTimer / 120;
@@ -1039,8 +1077,8 @@ function renderHUD(ctx: CanvasRenderingContext2D, g: GameData) {
     ctx.fillStyle = '#555560'; ctx.fillRect(dashX - 10, dashY + 10 - pct * 20, 20, pct * 20);
     ctx.fillStyle = '#333340';
   }
-  ctx.font = '700 12px monospace'; ctx.textAlign = 'center';
-  ctx.fillText('Q', dashX, dashY + 4); ctx.shadowBlur = 0;
+  ctx.font = '700 10px monospace'; ctx.textAlign = 'center';
+  ctx.fillText('SPC', dashX, dashY + 4); ctx.shadowBlur = 0;
   ctx.fillStyle = 'rgba(255,255,255,0.3)'; ctx.font = '8px monospace';
   ctx.fillText('DASH', dashX, dashY + 18);
 
@@ -1072,15 +1110,15 @@ function renderHUD(ctx: CanvasRenderingContext2D, g: GameData) {
 
   // Gem selector
   const gems: { type: WeaponType; key: string; name: string; color: string }[] = [
-    { type: 'shadow', key: 'Click', name: 'Shadow', color: '#9b30ff' },
-    { type: 'fire', key: '1', name: 'Ember', color: '#ff5500' },
-    { type: 'frost', key: '2', name: 'Frost', color: '#88ddff' },
-    { type: 'storm', key: '3', name: 'Storm', color: '#ffdd00' },
-    { type: 'venom', key: '4', name: 'Venom', color: '#44ff44' },
-    { type: 'void', key: '5', name: 'Void', color: '#9b30ff' },
-    { type: 'terra', key: '6', name: 'Terra', color: '#cc8844' },
-    { type: 'gale', key: '7', name: 'Gale', color: '#aaddff' },
-    { type: 'flux', key: '8', name: 'Flux', color: '#ffaa00' },
+    { type: 'shadow', key: '1', name: 'Shadow', color: '#9b30ff' },
+    { type: 'fire', key: '2', name: 'Ember', color: '#ff5500' },
+    { type: 'frost', key: '3', name: 'Frost', color: '#88ddff' },
+    { type: 'storm', key: '4', name: 'Storm', color: '#ffdd00' },
+    { type: 'venom', key: '5', name: 'Venom', color: '#44ff44' },
+    { type: 'void', key: '6', name: 'Void', color: '#9b30ff' },
+    { type: 'terra', key: '7', name: 'Terra', color: '#cc8844' },
+    { type: 'gale', key: '8', name: 'Gale', color: '#aaddff' },
+    { type: 'flux', key: '9', name: 'Flux', color: '#ffaa00' },
   ];
 
   const gemBarWidth = gems.length * 38;
@@ -1122,7 +1160,11 @@ function renderHUD(ctx: CanvasRenderingContext2D, g: GameData) {
   renderComboReadyIndicator(ctx, g);
 
   ctx.fillStyle = 'rgba(255,255,255,0.2)'; ctx.font = '10px monospace'; ctx.textAlign = 'center';
-  ctx.fillText('WASD Move · Mouse Aim · Click Shoot · Q Dash · F Umbra · 1-8 Gems', g.width / 2, g.height - 6);
+  if (g.coopState === 'playing') {
+    ctx.fillText('WASD Move · Mouse Aim · Click Shoot · SPACE Dash · 1-9 Gems · F Umbra Mode', g.width / 2, g.height - 6);
+  } else {
+    ctx.fillText('WASD Move · Mouse Aim · Click Shoot · SPACE Dash · 1-9 Switch Gem · F Umbra Mode', g.width / 2, g.height - 6);
+  }
 
   // ---- Solus HUD (co-op) ----
   if (g.coopState === 'playing' && g.solus) {
@@ -1190,35 +1232,6 @@ function renderHUD(ctx: CanvasRenderingContext2D, g: GameData) {
     ctx.font = '700 8px Cinzel, serif'; ctx.textAlign = 'center';
     ctx.fillText(drReady ? 'F — DIVINE RECKONING' : s.divineReckoningActive ? `RECKONING — ${Math.ceil(s.divineReckoningTimer / 60)}s` : 'CONVICTION', sConvX + sConvW / 2, sConvY - 3);
 
-    // ---- MINIMAP ----
-    const mmSize = 120, mmX = 16, mmY = g.height - mmSize - 50;
-    const scaleX = mmSize / g.arenaWidth, scaleY = mmSize / g.arenaHeight;
-    ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(mmX, mmY, mmSize, mmSize);
-    ctx.strokeStyle = '#333355'; ctx.lineWidth = 1; ctx.strokeRect(mmX, mmY, mmSize, mmSize);
-    // Obstacles
-    for (const obs of g.obstacles) {
-      ctx.fillStyle = '#222244';
-      ctx.fillRect(mmX + obs.pos.x * scaleX, mmY + obs.pos.y * scaleY, obs.width * scaleX, obs.height * scaleY);
-    }
-    // Enemies
-    for (const e of g.enemies) {
-      if (!e.alive) continue;
-      const ex = mmX + e.pos.x * scaleX, ey = mmY + e.pos.y * scaleY;
-      if (e.type === 'boss') {
-        ctx.fillStyle = '#ff0000'; ctx.shadowColor = '#ff0000'; ctx.shadowBlur = 3;
-        ctx.beginPath(); ctx.arc(ex, ey, 3, 0, Math.PI * 2); ctx.fill(); ctx.shadowBlur = 0;
-      } else {
-        ctx.fillStyle = e.isElite ? '#ffd700' : '#ff4444';
-        ctx.fillRect(ex - 1, ey - 1, 2, 2);
-      }
-    }
-    // Umbra dot
-    ctx.fillStyle = '#9b30ff'; ctx.shadowColor = '#9b30ff'; ctx.shadowBlur = 4;
-    ctx.beginPath(); ctx.arc(mmX + g.player.pos.x * scaleX, mmY + g.player.pos.y * scaleY, 2.5, 0, Math.PI * 2); ctx.fill();
-    // Solus dot
-    ctx.fillStyle = '#ffd700'; ctx.shadowColor = '#ffd700';
-    ctx.beginPath(); ctx.arc(mmX + s.pos.x * scaleX, mmY + s.pos.y * scaleY, 2.5, 0, Math.PI * 2); ctx.fill();
-    ctx.shadowBlur = 0;
   }
 }
 
@@ -1263,7 +1276,7 @@ function renderStartScreen(ctx: CanvasRenderingContext2D, g: GameData) {
   ctx.fillStyle = '#880000'; ctx.fillRect(cx - 6, cy + 3, 12, 2);
 
   ctx.fillStyle = 'rgba(255,255,255,0.35)'; ctx.font = '13px monospace';
-  ctx.fillText('WASD Move · Mouse Aim · Click Shoot · Q Dash · F Umbra · 1-8 Gems', g.width / 2, g.height / 2 + 70);
+  ctx.fillText('WASD Move · Mouse Aim · Click Shoot · SPACE Dash · 1-9 Gems · F Umbra Mode', g.width / 2, g.height / 2 + 70);
   if (g.bestWave > 0) { ctx.fillStyle = 'rgba(255,215,0,0.5)'; ctx.font = '14px monospace'; ctx.fillText(`Best Wave: ${g.bestWave}`, g.width / 2, g.height / 2 + 90); }
 
   const pulse = Math.sin(g.startPulse) * 0.3 + 0.7;

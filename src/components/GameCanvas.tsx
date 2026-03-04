@@ -1,5 +1,5 @@
 import { useRef, useEffect, useCallback, useState } from 'react';
-import { createGame, update, startGame, setWeapon, activateDash, activateUmbraMode, selectUpgrade, enableCoop, updateSolus } from '@/game/engine';
+import { createGame, update, startGame, setWeapon, activateDash, activateUmbraMode, selectUpgrade, enableCoop, updateSolus, activateSolusDash } from '@/game/engine';
 import { render } from '@/game/renderer';
 import { resumeAudio, playSoundEvent } from '@/game/audio';
 import { GameData, WeaponType } from '@/game/types';
@@ -90,15 +90,17 @@ const GameCanvas = () => {
     gameRef.current = g;
 
     const weaponKeys: Record<string, WeaponType> = {
-      '1': 'fire', '2': 'frost', '3': 'storm', '4': 'venom',
-      '5': 'void', '6': 'terra', '7': 'gale', '8': 'flux',
+      '1': 'shadow', '2': 'fire', '3': 'frost', '4': 'storm', '5': 'venom',
+      '6': 'void', '7': 'terra', '8': 'gale', '9': 'flux',
     };
 
     const onKeyDown = (e: KeyboardEvent) => {
+      // Don't intercept keys when input is focused
+      if (document.activeElement && document.activeElement.tagName === 'INPUT') return;
       const key = e.key.toLowerCase();
       g.keys[key] = true;
+      if (key === ' ') { g.keys[' '] = true; activateDash(g); if (g.solus) activateSolusDash(g); }
       if (weaponKeys[key]) setWeapon(g, weaponKeys[key]);
-      if (key === 'q') activateDash(g);
       if (key === 'f') activateUmbraMode(g);
       e.preventDefault();
     };
@@ -257,7 +259,6 @@ const GameCanvas = () => {
           <h1 style={{ fontSize: 48, color: '#9b30ff', textShadow: '0 0 30px #9b30ff', marginBottom: 10 }}>
             MYCELIUM MAYHEM
           </h1>
-          <p style={{ color: '#aa88cc', fontSize: 18, marginBottom: 40 }}>Choose your path</p>
 
           {lobbyState === 'idle' || lobbyState === 'error' ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 16, alignItems: 'center' }}>
@@ -279,12 +280,16 @@ const GameCanvas = () => {
                 <input
                   value={joinCode}
                   onChange={e => setJoinCode(e.target.value.toUpperCase().slice(0, 6))}
+                  onKeyDown={e => { if (e.key === 'Enter') handleJoinSession(); e.stopPropagation(); }}
                   placeholder="ROOM CODE"
+                  maxLength={6}
                   style={{
-                    background: '#0d0d18', border: '2px solid #555', color: '#fff',
+                    background: '#0d0d18', border: '2px solid #88ddff', color: '#88ddff',
                     padding: '12px 16px', fontSize: 18, fontFamily: 'Orbitron, monospace',
-                    textAlign: 'center', width: 160, letterSpacing: 4, borderRadius: 4,
+                    textAlign: 'center', width: 180, letterSpacing: 4, borderRadius: 4,
+                    outline: 'none',
                   }}
+                  onFocus={() => { /* input focused - keys won't be intercepted */ }}
                 />
                 <button onClick={handleJoinSession} style={{
                   background: '#1a3300', border: '2px solid #44ff44', color: '#44ff44',
@@ -322,7 +327,9 @@ const GameCanvas = () => {
             </div>
           ) : lobbyState === 'countdown' ? (
             <div style={{ textAlign: 'center' }}>
-              <p style={{ color: '#ffd700', fontSize: 48 }}>{Math.ceil(multiplayer.countdownTimer / 60)}</p>
+              <p style={{ color: '#ffd700', fontSize: 64, fontFamily: 'Cinzel, serif' }}>
+                {Math.ceil(multiplayer.countdownTimer / 60)}
+              </p>
             </div>
           ) : lobbyState === 'joining' || lobbyState === 'creating' ? (
             <p style={{ color: '#888', fontSize: 18 }}>Connecting...</p>

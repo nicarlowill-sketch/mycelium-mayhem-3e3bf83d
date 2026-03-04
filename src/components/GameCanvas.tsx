@@ -327,9 +327,19 @@ const GameCanvas = () => {
             </div>
           ) : lobbyState === 'countdown' ? (
             <div style={{ textAlign: 'center' }}>
-              <p style={{ color: '#ffd700', fontSize: 64, fontFamily: 'Cinzel, serif' }}>
-                {Math.ceil(multiplayer.countdownTimer / 60)}
+              <p style={{ color: '#ffd700', fontSize: 80, fontFamily: 'Cinzel, serif', textShadow: '0 0 30px #ffd700' }}>
+                {multiplayer.countdownTimer > 0 ? multiplayer.countdownTimer : 'GO!'}
               </p>
+              <div style={{ display: 'flex', justifyContent: 'center', gap: 80, marginTop: 30 }}>
+                <div style={{ textAlign: 'center' }}>
+                  <div style={{ width: 60, height: 80, background: 'rgba(155,48,255,0.3)', border: '2px solid #9b30ff', borderRadius: 8 }} />
+                  <p style={{ color: '#9b30ff', fontSize: 14, marginTop: 8 }}>UMBRA</p>
+                </div>
+                <div style={{ textAlign: 'center' }}>
+                  <div style={{ width: 60, height: 80, background: 'rgba(255,215,0,0.3)', border: '2px solid #ffd700', borderRadius: 8 }} />
+                  <p style={{ color: '#ffd700', fontSize: 14, marginTop: 8 }}>SOLUS</p>
+                </div>
+              </div>
             </div>
           ) : lobbyState === 'joining' || lobbyState === 'creating' ? (
             <p style={{ color: '#888', fontSize: 18 }}>Connecting...</p>

@@ -751,7 +751,7 @@ function spawnBoss(g: GameData) {
   const heraldType = getHeraldType(g.wave);
   const cycleNum = Math.floor((g.wave / 5 - 1) / 8);
   const baseHp = 30 + (heraldType - 1) * 5;
-  const bossHp = Math.floor(baseHp * (1 + cycleNum * 0.5));
+  const bossHp = Math.floor(baseHp * (1 + cycleNum * 0.5) * getCoopBossHpMultiplier(g));
   const boss = createEnemy(g, heraldType === 6 ? 0.5 : heraldType === 7 ? 1.4 : 0.8, 'boss');
   boss.hp = bossHp;
   boss.maxHp = bossHp;
@@ -767,7 +767,8 @@ function spawnBoss(g: GameData) {
 }
 
 function spawnWaveEnemies(g: GameData) {
-  const rusherCount = 3 + (g.wave - 1) * 2;
+  const countMult = getCoopEnemyCountMultiplier(g);
+  const rusherCount = Math.ceil((3 + (g.wave - 1) * 2) * countMult);
   const rusherSpeed = 1.4 + (g.wave - 1) * 0.1;
   for (let i = 0; i < rusherCount; i++) {
     const e = createEnemy(g, rusherSpeed, 'rusher');
@@ -775,7 +776,7 @@ function spawnWaveEnemies(g: GameData) {
     g.enemies.push(e);
   }
   if (g.wave >= 3) {
-    const sniperCount = Math.min(g.wave - 2, 5);
+    const sniperCount = Math.ceil(Math.min(g.wave - 2, 5) * countMult);
     for (let i = 0; i < sniperCount; i++) {
       const e = createEnemy(g, 0.8, 'sniper');
       maybeElite(e, g.wave);
@@ -784,14 +785,14 @@ function spawnWaveEnemies(g: GameData) {
   }
   // Shield Rushers from wave 4+
   if (g.wave >= 4 && !isBossWave(g.wave)) {
-    const shieldCount = Math.min(Math.floor((g.wave - 3) / 2), 3);
+    const shieldCount = Math.ceil(Math.min(Math.floor((g.wave - 3) / 2), 3) * countMult);
     for (let i = 0; i < shieldCount; i++) {
       const e = createEnemy(g, rusherSpeed * 0.9, 'shieldRusher');
       g.enemies.push(e);
     }
   }
   if (g.wave >= 5 && !isBossWave(g.wave)) {
-    const fwCount = Math.min(Math.floor((g.wave - 4) / 2), 3);
+    const fwCount = Math.ceil(Math.min(Math.floor((g.wave - 4) / 2), 3) * countMult);
     for (let i = 0; i < fwCount; i++) {
       const e = createEnemy(g, 0.5, 'fogWeaver');
       maybeElite(e, g.wave);
@@ -799,7 +800,7 @@ function spawnWaveEnemies(g: GameData) {
     }
   }
   if (g.wave >= 6 && !isBossWave(g.wave)) {
-    const titanCount = Math.min(Math.floor((g.wave - 5) / 2), 3);
+    const titanCount = Math.ceil(Math.min(Math.floor((g.wave - 5) / 2), 3) * countMult);
     for (let i = 0; i < titanCount; i++) {
       const e = createEnemy(g, 0.6, 'titan');
       maybeElite(e, g.wave >= 10 ? g.wave : 0);
@@ -808,7 +809,7 @@ function spawnWaveEnemies(g: GameData) {
   }
   // Brutes from wave 8+
   if (g.wave >= 8 && !isBossWave(g.wave)) {
-    const bruteCount = Math.min(Math.floor((g.wave - 7) / 3), 2);
+    const bruteCount = Math.ceil(Math.min(Math.floor((g.wave - 7) / 3), 2) * countMult);
     for (let i = 0; i < bruteCount; i++) {
       g.enemies.push(createEnemy(g, 0.8, 'brute'));
     }
@@ -840,7 +841,9 @@ function createEnemy(g: GameData, speed: number, type: Enemy['type']): Enemy {
     default: x = b + 20; y = b + Math.random() * (g.arenaHeight - 2 * b); break;
   }
   const hpMap: Record<string, number> = { rusher: 2, sniper: 3, titan: 12, fogWeaver: 4, boss: 30, shieldRusher: 3, brute: 6 };
-  const hp = hpMap[type] || 2;
+  const baseHp = hpMap[type] || 2;
+  const hpMult = type === 'boss' ? getCoopBossHpMultiplier(g) : getCoopHpMultiplier(g);
+  const hp = Math.ceil(baseHp * hpMult);
   const evoTimer = EVOLUTION_TIMERS[type] || 0;
   return {
     pos: { x, y }, hp, maxHp: hp, alive: true, flashTimer: 0, flinchTimer: 0,
@@ -2054,7 +2057,8 @@ function updateBoss(g: GameData, e: Enemy, p: Player, edx: number, edy: number, 
   const oldPhase = e.bossPhase;
 
   // Berserk check
-  if (hpPct <= 0.15 && !e.isBerserk) {
+  const berserkThreshold = g.coopState === 'playing' ? 0.20 : 0.15;
+  if (hpPct <= berserkThreshold && !e.isBerserk) {
     e.isBerserk = true;
     g.waveAnnounceText = 'BERSERK';
     g.waveAnnounceTimer = 90;

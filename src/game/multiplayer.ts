@@ -72,6 +72,7 @@ export class MultiplayerManager {
   latency: number = 0;
   disconnectTimer: number = 0;
   errorMessage: string = '';
+  _clientFallbackTimer: any = null;
   onStateChange: (() => void) | null = null;
 
   get isMultiplayer(): boolean {
@@ -113,10 +114,7 @@ export class MultiplayerManager {
         this.lobbyState = 'connected';
         this.onStateChange?.();
         setTimeout(() => {
-          this.lobbyState = 'countdown';
-          this.countdownTimer = 180; // 3 seconds
-          this.channel?.send({ type: 'broadcast', event: 'countdown_start', payload: {} });
-          this.onStateChange?.();
+          this.runHostCountdown();
         }, 1000);
       });
 
@@ -175,9 +173,10 @@ export class MultiplayerManager {
         this.latency = Date.now() - (payload.payload._ts || Date.now());
       });
 
-      this.channel.on('broadcast', { event: 'countdown_start' }, () => {
+      this.channel.on('broadcast', { event: 'countdown_tick' }, (payload: any) => {
+        if (this._clientFallbackTimer) { clearTimeout(this._clientFallbackTimer); this._clientFallbackTimer = null; }
         this.lobbyState = 'countdown';
-        this.countdownTimer = 180;
+        this.countdownTimer = payload.payload.value;
         this.onStateChange?.();
       });
 
@@ -200,6 +199,26 @@ export class MultiplayerManager {
 
       this.lobbyState = 'connected';
       this.onStateChange?.();
+
+      // Fallback: if no countdown received within 4s, run local countdown
+      this._clientFallbackTimer = setTimeout(() => {
+        if (this.lobbyState === 'connected') {
+          this.lobbyState = 'countdown';
+          this.countdownTimer = 3;
+          this.onStateChange?.();
+          const tick = (v: number) => {
+            if (v <= 0) {
+              this.countdownTimer = 0;
+              this.onStateChange?.();
+              setTimeout(() => { this.lobbyState = 'playing'; this.onStateChange?.(); }, 500);
+              return;
+            }
+            setTimeout(() => { this.countdownTimer = v - 1; this.onStateChange?.(); tick(v - 1); }, 1000);
+          };
+          tick(3);
+        }
+      }, 4000) as any;
+
       return true;
     } catch {
       this.errorMessage = 'Room not found';
@@ -235,6 +254,30 @@ export class MultiplayerManager {
     });
   }
 
+  runHostCountdown() {
+    this.lobbyState = 'countdown';
+    this.countdownTimer = 3;
+    this.channel?.send({ type: 'broadcast', event: 'countdown_tick', payload: { value: 3 } });
+    this.onStateChange?.();
+
+    const tick = (value: number) => {
+      if (value <= 0) {
+        this.countdownTimer = 0;
+        this.channel?.send({ type: 'broadcast', event: 'countdown_tick', payload: { value: 0 } });
+        this.onStateChange?.();
+        setTimeout(() => this.startGame(), 500);
+        return;
+      }
+      setTimeout(() => {
+        this.countdownTimer = value - 1;
+        this.channel?.send({ type: 'broadcast', event: 'countdown_tick', payload: { value: value - 1 } });
+        this.onStateChange?.();
+        tick(value - 1);
+      }, 1000);
+    };
+    tick(3);
+  }
+
   startGame() {
     if (!this.channel || this.role !== 'host') return;
     this.lobbyState = 'playing';
@@ -255,12 +298,6 @@ export class MultiplayerManager {
   }
 
   update() {
-    if (this.lobbyState === 'countdown') {
-      this.countdownTimer--;
-      if (this.countdownTimer <= 0 && this.role === 'host') {
-        this.startGame();
-      }
-    }
     if (this.lobbyState === 'disconnected') {
       this.disconnectTimer--;
       if (this.disconnectTimer <= 0) {

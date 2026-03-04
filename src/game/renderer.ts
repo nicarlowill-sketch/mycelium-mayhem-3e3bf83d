@@ -1123,6 +1123,103 @@ function renderHUD(ctx: CanvasRenderingContext2D, g: GameData) {
 
   ctx.fillStyle = 'rgba(255,255,255,0.2)'; ctx.font = '10px monospace'; ctx.textAlign = 'center';
   ctx.fillText('WASD Move · Mouse Aim · Click Shoot · Q Dash · F Umbra · 1-8 Gems', g.width / 2, g.height - 6);
+
+  // ---- Solus HUD (co-op) ----
+  if (g.coopState === 'playing' && g.solus) {
+    const s = g.solus;
+    // Solus HP orbs below Umbra's
+    const sOrbSize = 8, sOrbSpacing = 20;
+    const sOrbStartX = g.width - 30 - (s.maxHp - 1) * sOrbSpacing;
+    const sOrbY = 60;
+    ctx.fillStyle = '#ffd700'; ctx.font = '700 9px monospace'; ctx.textAlign = 'right';
+    ctx.fillText('SOLUS', sOrbStartX - 8, sOrbY + 4);
+    for (let i = 0; i < s.maxHp; i++) {
+      const ox = sOrbStartX + i * sOrbSpacing;
+      ctx.beginPath(); ctx.arc(ox, sOrbY, sOrbSize, 0, Math.PI * 2);
+      if (s.collapsed) { ctx.fillStyle = '#ff3333'; ctx.shadowColor = '#ff3333'; ctx.shadowBlur = 6; }
+      else if (i < s.hp) { ctx.fillStyle = '#ffd700'; ctx.shadowColor = '#ffd700'; ctx.shadowBlur = 8; }
+      else { ctx.fillStyle = '#333340'; ctx.shadowBlur = 0; }
+      ctx.fill(); ctx.shadowBlur = 0;
+    }
+
+    // Solus ability cooldowns - bottom right
+    const abX = g.width - 80;
+    const abY = g.height - 100;
+
+    // Q - Radiant Burst
+    const qReady = s.radiantBurstCooldown <= 0;
+    ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(abX - 12, abY - 12, 24, 24);
+    if (!qReady) {
+      const pct = 1 - s.radiantBurstCooldown / 480;
+      ctx.fillStyle = '#555560'; ctx.fillRect(abX - 10, abY + 10 - pct * 20, 20, pct * 20);
+    }
+    ctx.fillStyle = qReady ? '#ffd700' : '#333340';
+    if (qReady) { ctx.shadowColor = '#ffd700'; ctx.shadowBlur = 6; }
+    ctx.font = '700 12px monospace'; ctx.textAlign = 'center';
+    ctx.fillText('Q', abX, abY + 4); ctx.shadowBlur = 0;
+    ctx.fillStyle = 'rgba(255,255,255,0.3)'; ctx.font = '8px monospace';
+    ctx.fillText('BURST', abX, abY + 18);
+
+    // E - Martyr Shield
+    const eX = abX + 34;
+    const eReady = s.martyrShieldCooldown <= 0 && !s.martyrShieldActive;
+    ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(eX - 12, abY - 12, 24, 24);
+    if (s.martyrShieldActive) {
+      ctx.fillStyle = '#ffd700'; ctx.fillRect(eX - 10, abY - 10, 20, 20);
+    } else if (!eReady) {
+      const pct = 1 - s.martyrShieldCooldown / 600;
+      ctx.fillStyle = '#555560'; ctx.fillRect(eX - 10, abY + 10 - pct * 20, 20, pct * 20);
+    }
+    ctx.fillStyle = s.martyrShieldActive ? '#ffffff' : eReady ? '#ffd700' : '#333340';
+    if (eReady || s.martyrShieldActive) { ctx.shadowColor = '#ffd700'; ctx.shadowBlur = 6; }
+    ctx.font = '700 12px monospace'; ctx.textAlign = 'center';
+    ctx.fillText('E', eX, abY + 4); ctx.shadowBlur = 0;
+    ctx.fillStyle = 'rgba(255,255,255,0.3)'; ctx.font = '8px monospace';
+    ctx.fillText('SHIELD', eX, abY + 18);
+
+    // Solus conviction bar
+    const sConvW = 120, sConvH = 6;
+    const sConvX = abX - 20, sConvY = abY - 24;
+    const drReady = s.conviction >= 100 && !s.divineReckoningActive;
+    ctx.strokeStyle = drReady ? '#ffd700' : '#444455'; ctx.lineWidth = 1;
+    ctx.strokeRect(sConvX, sConvY, sConvW, sConvH);
+    ctx.fillStyle = '#1a1a00'; ctx.fillRect(sConvX + 1, sConvY + 1, sConvW - 2, sConvH - 2);
+    ctx.fillStyle = drReady ? '#ffd700' : '#aa8800';
+    ctx.fillRect(sConvX + 1, sConvY + 1, (sConvW - 2) * (s.conviction / 100), sConvH - 2);
+    ctx.fillStyle = drReady ? '#ffd700' : 'rgba(255,255,255,0.3)';
+    ctx.font = '700 8px Cinzel, serif'; ctx.textAlign = 'center';
+    ctx.fillText(drReady ? 'F — DIVINE RECKONING' : s.divineReckoningActive ? `RECKONING — ${Math.ceil(s.divineReckoningTimer / 60)}s` : 'CONVICTION', sConvX + sConvW / 2, sConvY - 3);
+
+    // ---- MINIMAP ----
+    const mmSize = 120, mmX = 16, mmY = g.height - mmSize - 50;
+    const scaleX = mmSize / g.arenaWidth, scaleY = mmSize / g.arenaHeight;
+    ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(mmX, mmY, mmSize, mmSize);
+    ctx.strokeStyle = '#333355'; ctx.lineWidth = 1; ctx.strokeRect(mmX, mmY, mmSize, mmSize);
+    // Obstacles
+    for (const obs of g.obstacles) {
+      ctx.fillStyle = '#222244';
+      ctx.fillRect(mmX + obs.pos.x * scaleX, mmY + obs.pos.y * scaleY, obs.width * scaleX, obs.height * scaleY);
+    }
+    // Enemies
+    for (const e of g.enemies) {
+      if (!e.alive) continue;
+      const ex = mmX + e.pos.x * scaleX, ey = mmY + e.pos.y * scaleY;
+      if (e.type === 'boss') {
+        ctx.fillStyle = '#ff0000'; ctx.shadowColor = '#ff0000'; ctx.shadowBlur = 3;
+        ctx.beginPath(); ctx.arc(ex, ey, 3, 0, Math.PI * 2); ctx.fill(); ctx.shadowBlur = 0;
+      } else {
+        ctx.fillStyle = e.isElite ? '#ffd700' : '#ff4444';
+        ctx.fillRect(ex - 1, ey - 1, 2, 2);
+      }
+    }
+    // Umbra dot
+    ctx.fillStyle = '#9b30ff'; ctx.shadowColor = '#9b30ff'; ctx.shadowBlur = 4;
+    ctx.beginPath(); ctx.arc(mmX + g.player.pos.x * scaleX, mmY + g.player.pos.y * scaleY, 2.5, 0, Math.PI * 2); ctx.fill();
+    // Solus dot
+    ctx.fillStyle = '#ffd700'; ctx.shadowColor = '#ffd700';
+    ctx.beginPath(); ctx.arc(mmX + s.pos.x * scaleX, mmY + s.pos.y * scaleY, 2.5, 0, Math.PI * 2); ctx.fill();
+    ctx.shadowBlur = 0;
+  }
 }
 
 function renderComboReadyIndicator(ctx: CanvasRenderingContext2D, g: GameData) {
@@ -1176,15 +1273,81 @@ function renderStartScreen(ctx: CanvasRenderingContext2D, g: GameData) {
 
 function renderGameOver(ctx: CanvasRenderingContext2D, g: GameData) {
   ctx.fillStyle = 'rgba(0,0,0,0.75)'; ctx.fillRect(0, 0, g.width, g.height);
-  ctx.fillStyle = '#ff3333'; ctx.font = '900 72px Cinzel, serif'; ctx.textAlign = 'center';
-  ctx.shadowColor = '#ff3333'; ctx.shadowBlur = 20;
-  ctx.fillText('YOU FELL', g.width / 2, g.height / 2 - 40); ctx.shadowBlur = 0;
-  ctx.fillStyle = '#ffd700'; ctx.font = '400 22px Cinzel, serif';
-  ctx.fillText(`Waves Survived: ${g.wavesCleared}  ·  Enemies Slain: ${g.score}`, g.width / 2, g.height / 2 + 20);
-  if (g.wavesCleared >= g.bestWave && g.wavesCleared > 0) {
-    ctx.fillStyle = '#ffd700'; ctx.font = '700 18px Cinzel, serif'; ctx.fillText('NEW BEST!', g.width / 2, g.height / 2 + 50);
+
+  if (g.coopState === 'playing') {
+    // Co-op end screen
+    ctx.fillStyle = '#ff3333'; ctx.font = '900 56px Cinzel, serif'; ctx.textAlign = 'center';
+    ctx.shadowColor = '#ff3333'; ctx.shadowBlur = 20;
+    ctx.fillText('YOU FELL', g.width / 2, 100); ctx.shadowBlur = 0;
+
+    ctx.fillStyle = '#ffd700'; ctx.font = '400 18px Cinzel, serif';
+    ctx.fillText(`Waves Survived: ${g.wavesCleared}  ·  Combined Kills: ${g.score + g.solusScore}`, g.width / 2, 140);
+
+    // Umbra stats - left
+    const colW = 220, leftX = g.width / 2 - colW - 30, rightX = g.width / 2 + 30;
+    const statY = 200;
+
+    // Determine MVP
+    const umbraKills = g.score, solusKills = g.solusScore;
+    const umbraMVP = umbraKills >= solusKills;
+
+    // Umbra column
+    ctx.fillStyle = '#9b30ff'; ctx.font = '700 24px Cinzel, serif'; ctx.textAlign = 'center';
+    ctx.shadowColor = '#9b30ff'; ctx.shadowBlur = 10;
+    ctx.fillText('UMBRA', leftX + colW / 2, statY); ctx.shadowBlur = 0;
+    if (umbraMVP) {
+      ctx.fillStyle = '#ffd700'; ctx.font = '12px monospace';
+      ctx.fillText('👑 MVP', leftX + colW / 2, statY + 18);
+    }
+    ctx.fillStyle = '#cccccc'; ctx.font = '14px monospace'; ctx.textAlign = 'left';
+    const uStats = [
+      `Kills: ${umbraKills}`,
+      `Waves: ${g.wavesCleared}`,
+      `Upgrades: ${g.player.upgrades.length}`,
+      `Revives Left: ${g.umbraRevivesRemaining}`,
+    ];
+    for (let i = 0; i < uStats.length; i++) {
+      ctx.fillText(uStats[i], leftX + 20, statY + 40 + i * 22);
+    }
+
+    // Solus column
+    ctx.fillStyle = '#ffd700'; ctx.font = '700 24px Cinzel, serif'; ctx.textAlign = 'center';
+    ctx.shadowColor = '#ffd700'; ctx.shadowBlur = 10;
+    ctx.fillText('SOLUS', rightX + colW / 2, statY); ctx.shadowBlur = 0;
+    if (!umbraMVP) {
+      ctx.fillStyle = '#ffd700'; ctx.font = '12px monospace';
+      ctx.fillText('👑 MVP', rightX + colW / 2, statY + 18);
+    }
+    ctx.fillStyle = '#cccccc'; ctx.font = '14px monospace'; ctx.textAlign = 'left';
+    const sStats = [
+      `Kills: ${solusKills}`,
+      `Waves: ${g.wavesCleared}`,
+      `Upgrades: ${g.solus?.upgrades.length ?? 0}`,
+      `Revives Left: ${g.solus?.revivesRemaining ?? 0}`,
+    ];
+    for (let i = 0; i < sStats.length; i++) {
+      ctx.fillText(sStats[i], rightX + 20, statY + 40 + i * 22);
+    }
+
+    if (g.wavesCleared >= g.bestWave && g.wavesCleared > 0) {
+      ctx.fillStyle = '#ffd700'; ctx.font = '700 18px Cinzel, serif'; ctx.textAlign = 'center';
+      ctx.fillText('NEW BEST!', g.width / 2, statY + 140);
+    }
+    const pulse = Math.sin(g.startPulse) * 0.3 + 0.7;
+    ctx.globalAlpha = pulse; ctx.fillStyle = '#9b30ff'; ctx.font = '700 24px Cinzel, serif'; ctx.textAlign = 'center';
+    ctx.fillText('Click to Play Again', g.width / 2, statY + 180); ctx.globalAlpha = 1;
+  } else {
+    // Solo end screen
+    ctx.fillStyle = '#ff3333'; ctx.font = '900 72px Cinzel, serif'; ctx.textAlign = 'center';
+    ctx.shadowColor = '#ff3333'; ctx.shadowBlur = 20;
+    ctx.fillText('YOU FELL', g.width / 2, g.height / 2 - 40); ctx.shadowBlur = 0;
+    ctx.fillStyle = '#ffd700'; ctx.font = '400 22px Cinzel, serif';
+    ctx.fillText(`Waves Survived: ${g.wavesCleared}  ·  Enemies Slain: ${g.score}`, g.width / 2, g.height / 2 + 20);
+    if (g.wavesCleared >= g.bestWave && g.wavesCleared > 0) {
+      ctx.fillStyle = '#ffd700'; ctx.font = '700 18px Cinzel, serif'; ctx.fillText('NEW BEST!', g.width / 2, g.height / 2 + 50);
+    }
+    const pulse = Math.sin(g.startPulse) * 0.3 + 0.7;
+    ctx.globalAlpha = pulse; ctx.fillStyle = '#9b30ff'; ctx.font = '700 28px Cinzel, serif';
+    ctx.fillText('Click to Play Again', g.width / 2, g.height / 2 + 90); ctx.globalAlpha = 1;
   }
-  const pulse = Math.sin(g.startPulse) * 0.3 + 0.7;
-  ctx.globalAlpha = pulse; ctx.fillStyle = '#9b30ff'; ctx.font = '700 28px Cinzel, serif';
-  ctx.fillText('Click to Play Again', g.width / 2, g.height / 2 + 90); ctx.globalAlpha = 1;
 }

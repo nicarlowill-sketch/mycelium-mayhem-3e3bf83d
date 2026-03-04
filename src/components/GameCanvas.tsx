@@ -144,8 +144,71 @@ const GameCanvas = () => {
       if (!running) return;
       update(g, performance.now());
 
-      // Update Solus in co-op (local input for now)
-      if (g.coopState === 'playing' && g.solus && g.state === 'playing') {
+      // Multiplayer sync & Solus update
+      if (multiplayer.isMultiplayer) {
+        multiplayer.update();
+
+        if (multiplayer.isHost) {
+          // Host: apply remote client input to Solus
+          if (g.coopState === 'playing' && g.solus && g.state === 'playing') {
+            const ri = multiplayer.remoteInput;
+            if (ri) {
+              updateSolus(g, {
+                keys: ri.keys,
+                mousePos: ri.mousePos,
+                mouseDown: ri.mouseDown,
+                abilityQ: ri.abilityQ,
+                abilityE: ri.abilityE,
+                ultimatePressed: ri.ultimatePressed,
+              });
+            }
+          }
+          // Send world state to client
+          if (g.solus) {
+            multiplayer.sendWorldState({
+              enemies: g.enemies.map(e => ({
+                pos: e.pos, hp: e.hp, maxHp: e.maxHp, alive: e.alive, type: e.type,
+                flashTimer: e.flashTimer, flinchTimer: e.flinchTimer, speed: e.speed,
+                bossPhase: e.bossPhase, evolved: e.evolved, evolving: e.evolving,
+                isBerserk: e.isBerserk, isElite: e.isElite, heraldType: e.heraldType,
+                isCamouflaged: e.isCamouflaged,
+                poison: !!e.poison, burning: !!e.burning, slow: !!e.slow, stun: !!e.stun,
+                shadowMark: !!e.shadowMark, darkFlame: !!e.darkFlame, frozenToxin: !!e.frozenToxin,
+              })),
+              projectiles: g.projectiles.map(p => ({
+                pos: p.pos, vel: p.vel, alive: p.alive, type: p.type, damage: p.damage, isParried: p.isParried,
+              })),
+              wave: g.wave,
+              score: g.score,
+              hostPlayer: {
+                pos: g.player.pos, vel: g.player.vel, angle: g.player.angle,
+                hp: g.player.hp, maxHp: g.player.maxHp, alive: g.player.alive,
+                animState: g.player.animState, animFrame: g.player.animFrame,
+                activeWeapon: g.player.activeWeapon, isDashing: g.player.isDashing,
+                umbraMode: g.player.umbraMode, conviction: g.player.conviction,
+                radiantBurstCooldown: 0, martyrShieldCooldown: 0, martyrShieldActive: false,
+                divineReckoningActive: false, divineReckoningTimer: 0,
+                collapsed: g.umbraCollapsed, reviveProgress: g.umbraReviveProgress,
+                revivesRemaining: g.umbraRevivesRemaining,
+              },
+              gemPickup: g.gemPickup && !g.gemPickup.collected ? { pos: g.gemPickup.pos, gemType: g.gemPickup.gemType } : null,
+              floorHazards: g.floorHazards.map(h => ({ pos: h.pos, radius: h.radius, type: h.type })),
+            });
+          }
+        } else {
+          // Client: send local inputs to host
+          multiplayer.sendInput({
+            keys: { ...g.keys },
+            mousePos: { x: g.mousePos.x + g.camera.x, y: g.mousePos.y + g.camera.y },
+            mouseDown: g.mouseDown,
+            dashPressed: !!g.keys['q'],
+            ultimatePressed: !!g.keys['f'],
+            abilityQ: !!g.keys['q'],
+            abilityE: !!g.keys['e'],
+          });
+        }
+      } else if (g.coopState === 'playing' && g.solus && g.state === 'playing') {
+        // Local co-op (same machine)
         updateSolus(g, {
           keys: g.keys,
           mousePos: g.mousePos,
@@ -154,42 +217,6 @@ const GameCanvas = () => {
           abilityE: !!g.keys['e'],
           ultimatePressed: !!g.keys['f'],
         });
-      }
-
-      // Multiplayer sync
-      if (multiplayer.isMultiplayer) {
-        multiplayer.update();
-        if (multiplayer.isHost && g.solus) {
-          multiplayer.sendWorldState({
-            enemies: g.enemies.map(e => ({
-              pos: e.pos, hp: e.hp, maxHp: e.maxHp, alive: e.alive, type: e.type,
-              flashTimer: e.flashTimer, flinchTimer: e.flinchTimer, speed: e.speed,
-              bossPhase: e.bossPhase, evolved: e.evolved, evolving: e.evolving,
-              isBerserk: e.isBerserk, isElite: e.isElite, heraldType: e.heraldType,
-              isCamouflaged: e.isCamouflaged,
-              poison: !!e.poison, burning: !!e.burning, slow: !!e.slow, stun: !!e.stun,
-              shadowMark: !!e.shadowMark, darkFlame: !!e.darkFlame, frozenToxin: !!e.frozenToxin,
-            })),
-            projectiles: g.projectiles.map(p => ({
-              pos: p.pos, vel: p.vel, alive: p.alive, type: p.type, damage: p.damage, isParried: p.isParried,
-            })),
-            wave: g.wave,
-            score: g.score,
-            hostPlayer: {
-              pos: g.player.pos, vel: g.player.vel, angle: g.player.angle,
-              hp: g.player.hp, maxHp: g.player.maxHp, alive: g.player.alive,
-              animState: g.player.animState, animFrame: g.player.animFrame,
-              activeWeapon: g.player.activeWeapon, isDashing: g.player.isDashing,
-              umbraMode: g.player.umbraMode, conviction: g.player.conviction,
-              radiantBurstCooldown: 0, martyrShieldCooldown: 0, martyrShieldActive: false,
-              divineReckoningActive: false, divineReckoningTimer: 0,
-              collapsed: g.umbraCollapsed, reviveProgress: g.umbraReviveProgress,
-              revivesRemaining: g.umbraRevivesRemaining,
-            },
-            gemPickup: g.gemPickup && !g.gemPickup.collected ? { pos: g.gemPickup.pos, gemType: g.gemPickup.gemType } : null,
-            floorHazards: g.floorHazards.map(h => ({ pos: h.pos, radius: h.radius, type: h.type })),
-          });
-        }
       }
 
       for (const evt of g.soundEvents) playSoundEvent(evt);

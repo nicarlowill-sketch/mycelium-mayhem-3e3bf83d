@@ -386,6 +386,8 @@ export interface GameData {
   heartPickup: HeartPickup | null;
   // Dying projectiles (flash + dissolve)
   dyingProjectiles: DyingProjectile[];
+  // Multiplayer client mode
+  isClientMode: boolean;
 }
 
 export interface HeartPickup {

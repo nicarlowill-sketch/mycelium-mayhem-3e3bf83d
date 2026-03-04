@@ -144,6 +144,7 @@ export function createGame(w: number, h: number): GameData {
     solusLastShotTime: 0,
     heartPickup: null,
     dyingProjectiles: [],
+    isClientMode: false,
   };
 }
 
@@ -1879,6 +1880,168 @@ export function update(g: GameData, now: number) {
     g.wavesCleared++;
     g.soundEvents.push('waveClear');
   }
+}
+
+// ---- Client-side update: only runs visuals + local Solus movement ----
+export function updateClient(g: GameData, now: number) {
+  g.startPulse += 0.02;
+  g.soundEvents = [];
+  g.frameTick++;
+
+  // Visual-only updates
+  updateSpores(g);
+  updateFog(g);
+
+  if (g.gemPickup && !g.gemPickup.collected) g.gemPickup.pulse += 0.05;
+
+  // Heart pickup pulse (no collection logic - host handles that)
+  if (g.heartPickup && !g.heartPickup.collected) {
+    g.heartPickup.pulse += 0.05;
+    g.heartPickup.life--;
+    if (g.heartPickup.life <= 0) g.heartPickup = null;
+  }
+
+  // Dying projectiles
+  for (const dp of g.dyingProjectiles) {
+    dp.life--;
+    if (dp.life <= 0) {
+      for (let i = 0; i < 3; i++) addParticle(g, dp.pos.x, dp.pos.y, '#ffffff', 1.5, 0.5, 0.3);
+    }
+  }
+  g.dyingProjectiles = g.dyingProjectiles.filter(dp => dp.life > 0);
+
+  if (g.gemNotifyTimer > 0) g.gemNotifyTimer--;
+  if (g.waveAnnounceTimer > 0) g.waveAnnounceTimer--;
+  if (g.screenFlashTimer > 0) g.screenFlashTimer--;
+  if (g.parryFlashTimer > 0) g.parryFlashTimer--;
+
+  // Combo popups
+  for (const cp of g.comboPopups) { cp.pos.y -= 0.8; cp.life--; }
+  g.comboPopups = g.comboPopups.filter(cp => cp.life > 0);
+
+  // Damage popups
+  for (const dp of g.damagePopups) { dp.pos.y -= 0.8; dp.life--; }
+  g.damagePopups = g.damagePopups.filter(dp => dp.life > 0);
+
+  if (g.player.hp <= 2 && g.player.alive) g.lowHpPulse += 0.05;
+
+  if (g.state === 'start' || g.state === 'gameOver') return;
+
+  // Particles
+  for (const pt of g.particles) {
+    pt.pos.x += pt.vel.x; pt.pos.y += pt.vel.y;
+    pt.vel.x *= 0.96; pt.vel.y *= 0.96;
+    pt.life--;
+  }
+  g.particles = g.particles.filter(pt => pt.life > 0);
+
+  // Screen shake
+  if (g.screenShakeIntensity > 0) {
+    g.screenShake.x = (Math.random() - 0.5) * g.screenShakeIntensity;
+    g.screenShake.y = (Math.random() - 0.5) * g.screenShakeIntensity;
+    g.screenShakeIntensity *= 0.85;
+    if (g.screenShakeIntensity < 0.5) { g.screenShakeIntensity = 0; g.screenShake.x = 0; g.screenShake.y = 0; }
+  }
+
+  // Camera follows Solus on client
+  const camTarget = g.solus && g.solus.alive ? g.solus : g.player;
+  const targetCamX = camTarget.pos.x - g.width / 2;
+  const targetCamY = camTarget.pos.y - g.height / 2;
+  g.camera.x += (targetCamX - g.camera.x) * CAMERA_LERP;
+  g.camera.y += (targetCamY - g.camera.y) * CAMERA_LERP;
+  g.camera.x = Math.max(0, Math.min(g.arenaWidth - g.width, g.camera.x));
+  g.camera.y = Math.max(0, Math.min(g.arenaHeight - g.height, g.camera.y));
+
+  // Wave clear (mirrored from host via worldState)
+  if (g.state === 'waveClear') {
+    g.waveClearTimer--;
+    if (g.waveClearTimer <= 0) {
+      g.state = 'playing';
+    }
+  }
+}
+
+// Apply host world state to client game data
+export function applyWorldState(g: GameData, ws: import('./multiplayer').WorldStateSync) {
+  // Overwrite enemies from host (reconstruct minimal enemy objects for rendering)
+  g.enemies = ws.enemies.map(e => ({
+    pos: { ...e.pos }, hp: e.hp, maxHp: e.maxHp, alive: e.alive,
+    flashTimer: e.flashTimer, flinchTimer: e.flinchTimer,
+    wobblePhase: Math.random() * Math.PI * 2, speed: e.speed, baseSpeed: e.speed,
+    type: e.type as any, shootTimer: 0, spawnFlash: 0, animFrame: 0, animTick: 0,
+    poison: e.poison ? { remaining: 1, tickTimer: 1 } : null,
+    slow: e.slow ? { remaining: 1 } : null,
+    burning: e.burning ? { remaining: 1, tickTimer: 1 } : null,
+    shadowMark: e.shadowMark ? { remaining: 1 } : null,
+    darkFlame: e.darkFlame ? { remaining: 1, tickTimer: 1 } : null,
+    frozenToxin: e.frozenToxin ? { remaining: 1, tickTimer: 1 } : null,
+    stun: e.stun ? { remaining: 1 } : null,
+    fogZone: null, repositionTimer: 0, bossPhase: e.bossPhase,
+    chargeTimer: 0, chargeCooldown: 0, chargeVel: { x: 0, y: 0 },
+    isCharging: false, spawnCooldown: 0,
+    evolutionTimer: 0, evolved: e.evolved, evolving: e.evolving, evolvingTimer: 0,
+    evolutionWarning: false, heraldType: e.heraldType, camoTimer: 0,
+    isCamouflaged: e.isCamouflaged, teleportCooldown: 0,
+    isBerserk: e.isBerserk, shieldAngle: 0, isElite: e.isElite,
+  }));
+
+  // Overwrite projectiles
+  g.projectiles = ws.projectiles.map(p => ({
+    pos: { ...p.pos }, vel: { ...p.vel }, alive: p.alive,
+    type: p.type as any, damage: p.damage,
+    piercing: false, chainRadius: 0, hasChained: false, travelDist: 0,
+    wobblePhase: 0, growSize: 6, zigzagDir: 1, baseAngle: Math.atan2(p.vel.y, p.vel.x),
+    homing: false, isParried: p.isParried,
+  }));
+
+  // Overwrite host player state (Umbra)
+  const hp = ws.hostPlayer;
+  g.player.pos = { ...hp.pos };
+  g.player.vel = { ...hp.vel };
+  g.player.angle = hp.angle;
+  g.player.hp = hp.hp;
+  g.player.maxHp = hp.maxHp;
+  g.player.alive = hp.alive;
+  g.player.animState = hp.animState as any;
+  g.player.animFrame = hp.animFrame;
+  g.player.activeWeapon = hp.activeWeapon;
+  g.player.isDashing = hp.isDashing;
+  g.player.umbraMode = hp.umbraMode;
+  g.player.conviction = hp.conviction;
+  g.umbraCollapsed = hp.collapsed;
+  g.umbraReviveProgress = hp.reviveProgress;
+  g.umbraRevivesRemaining = hp.revivesRemaining;
+
+  // Wave / score / game state
+  g.wave = ws.wave;
+  g.score = ws.score;
+  // Sync game state from host (playing, waveClear, gameOver, bossIntro, etc.)
+  if (ws.gameState === 'gameOver' || ws.gameState === 'waveClear' || ws.gameState === 'bossIntro') {
+    if (g.state !== ws.gameState) {
+      g.state = ws.gameState as any;
+      if (ws.gameState === 'waveClear') g.waveClearTimer = 180;
+    }
+  } else if (ws.gameState === 'playing' && g.state !== 'playing') {
+    g.state = 'playing';
+  }
+
+  // Gem pickup
+  if (ws.gemPickup) {
+    if (!g.gemPickup || g.gemPickup.collected) {
+      g.gemPickup = { pos: { ...ws.gemPickup.pos }, pulse: 0, collected: false, gemType: ws.gemPickup.gemType };
+    } else {
+      g.gemPickup.pos = { ...ws.gemPickup.pos };
+      g.gemPickup.gemType = ws.gemPickup.gemType;
+    }
+  } else {
+    g.gemPickup = null;
+  }
+
+  // Floor hazards
+  g.floorHazards = ws.floorHazards.map(h => ({
+    pos: { ...h.pos }, radius: h.radius, life: 60, maxLife: 60,
+    type: h.type as any, dirX: 0, dirY: 0,
+  }));
 }
 
 // ---- Shield logic ----

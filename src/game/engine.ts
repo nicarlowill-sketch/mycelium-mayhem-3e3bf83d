@@ -1,4 +1,4 @@
-import { GameData, Player, Enemy, Projectile, Particle, SporeParticle, FogPatch, Vec2, Obstacle, WeaponType, UpgradeId, Upgrade, UpgradeCard, SolusPlayer } from './types';
+import { GameData, Player, Enemy, Projectile, Particle, SporeParticle, FogPatch, Vec2, Obstacle, WeaponType, UpgradeId, Upgrade, UpgradeCard, SolusPlayer, HeartPickup, DyingProjectile } from './types';
 
 const PLAYER_SPEED = 3;
 const PLAYER_ACCEL = 0.15;
@@ -142,6 +142,8 @@ export function createGame(w: number, h: number): GameData {
     eclipseActive: false,
     eclipseTimer: 0,
     solusLastShotTime: 0,
+    heartPickup: null,
+    dyingProjectiles: [],
   };
 }
 
@@ -249,25 +251,40 @@ export function updateSolus(g: GameData, input: { keys: Record<string, boolean>;
   const s = g.solus;
   if (!s || !s.alive) return;
 
-  // Movement
-  let dx = 0, dy = 0;
-  if (input.keys['w']) dy -= 1;
-  if (input.keys['s']) dy += 1;
-  if (input.keys['a']) dx -= 1;
-  if (input.keys['d']) dx += 1;
-
-  const effectiveSpeed = PLAYER_SPEED * s.speedMultiplier;
-  if (dx !== 0 || dy !== 0) {
-    const len = Math.sqrt(dx * dx + dy * dy);
-    dx /= len; dy /= len;
-    s.vel.x += (dx * effectiveSpeed - s.vel.x) * PLAYER_ACCEL;
-    s.vel.y += (dy * effectiveSpeed - s.vel.y) * PLAYER_ACCEL;
+  // Dash movement
+  if (s.isDashing) {
+    s.dashTimer--;
+    const dashSpd = DASH_SPEED;
+    s.pos.x += s.dashDir.x * dashSpd;
+    s.pos.y += s.dashDir.y * dashSpd;
+    if (s.dashTimer % 2 === 0) {
+      s.afterimages.push({ pos: { x: s.pos.x, y: s.pos.y }, angle: s.angle, life: 18, maxLife: 18 });
+    }
+    if (s.dashTimer <= 0) {
+      s.isDashing = false;
+      for (let i = 0; i < 6; i++) addParticle(g, s.pos.x, s.pos.y, '#ffd700', 2, 1, 0.5);
+    }
   } else {
-    s.vel.x *= PLAYER_DECEL;
-    s.vel.y *= PLAYER_DECEL;
+    // Movement
+    let dx = 0, dy = 0;
+    if (input.keys['w']) dy -= 1;
+    if (input.keys['s']) dy += 1;
+    if (input.keys['a']) dx -= 1;
+    if (input.keys['d']) dx += 1;
+
+    const effectiveSpeed = PLAYER_SPEED * s.speedMultiplier;
+    if (dx !== 0 || dy !== 0) {
+      const len = Math.sqrt(dx * dx + dy * dy);
+      dx /= len; dy /= len;
+      s.vel.x += (dx * effectiveSpeed - s.vel.x) * PLAYER_ACCEL;
+      s.vel.y += (dy * effectiveSpeed - s.vel.y) * PLAYER_ACCEL;
+    } else {
+      s.vel.x *= PLAYER_DECEL;
+      s.vel.y *= PLAYER_DECEL;
+    }
+    s.pos.x += s.vel.x;
+    s.pos.y += s.vel.y;
   }
-  s.pos.x += s.vel.x;
-  s.pos.y += s.vel.y;
 
   // Bounds
   const brd = g.borderSize + 10;
@@ -686,6 +703,8 @@ export function startGame(g: GameData) {
   g.umbraCollapseTimer = 0;
   g.umbraReviveProgress = 0;
   g.umbraRevivesRemaining = 2;
+  g.heartPickup = null;
+  g.dyingProjectiles = [];
   if (g.coopState === 'playing') {
     g.solus = createSolus();
   }
@@ -903,6 +922,24 @@ export function activateDash(g: GameData) {
   }
 }
 
+// Solus dash (SPACE key)
+export function activateSolusDash(g: GameData) {
+  const s = g.solus;
+  if (!s || !s.alive || s.isDashing || s.dashCooldown > 0 || g.state !== 'playing') return;
+  s.isDashing = true;
+  s.dashTimer = DASH_DURATION;
+  s.dashCooldown = DASH_COOLDOWN;
+  const moving = Math.abs(s.vel.x) > 0.3 || Math.abs(s.vel.y) > 0.3;
+  if (moving) {
+    const len = Math.sqrt(s.vel.x * s.vel.x + s.vel.y * s.vel.y);
+    s.dashDir = { x: s.vel.x / len, y: s.vel.y / len };
+  } else {
+    s.dashDir = { x: Math.cos(s.angle), y: Math.sin(s.angle) };
+  }
+  s.invincibleTimer = Math.max(s.invincibleTimer, DASH_DURATION);
+  for (let i = 0; i < 6; i++) addParticle(g, s.pos.x, s.pos.y, '#ffd700', 2, 1, 0.5);
+}
+
 export function activateUmbraMode(g: GameData) {
   const p = g.player;
   if (!p.alive || p.conviction < 100 || p.umbraMode || p.umbraModeCooldown > 0 || g.state !== 'playing') return;
@@ -989,6 +1026,47 @@ export function update(g: GameData, now: number) {
   if (g.gemPickup && !g.gemPickup.collected) {
     g.gemPickup.pulse += 0.05;
   }
+
+  // Heart pickup update
+  if (g.heartPickup && !g.heartPickup.collected) {
+    g.heartPickup.pulse += 0.05;
+    g.heartPickup.life--;
+    if (g.heartPickup.life <= 0) {
+      g.heartPickup = null;
+    } else {
+      // Check player collection
+      const hp = g.heartPickup;
+      const p = g.player;
+      if (p.alive && p.hp < p.maxHp && dist(p.pos, hp.pos) < 20) {
+        hp.collected = true;
+        p.hp = p.maxHp;
+        p.flashTimer = 8;
+        g.screenFlashTimer = 4;
+        g.screenFlashColor = '#ff2244';
+        g.comboPopups.push({ pos: { x: p.pos.x, y: p.pos.y - 20 }, text: 'RESTORED', color: '#ff2244', life: 60, maxLife: 60 });
+        for (let i = 0; i < 12; i++) addParticle(g, hp.pos.x, hp.pos.y, '#ff2244', 2, 1.5, 1);
+        g.heartPickup = null;
+      } else if (g.solus && g.solus.alive && g.solus.hp < g.solus.maxHp && dist(g.solus.pos, hp.pos) < 20) {
+        hp.collected = true;
+        g.solus.hp = g.solus.maxHp;
+        g.solus.flashTimer = 8;
+        g.screenFlashTimer = 4;
+        g.screenFlashColor = '#ff2244';
+        g.comboPopups.push({ pos: { x: g.solus.pos.x, y: g.solus.pos.y - 20 }, text: 'RESTORED', color: '#ff2244', life: 60, maxLife: 60 });
+        for (let i = 0; i < 12; i++) addParticle(g, hp.pos.x, hp.pos.y, '#ff2244', 2, 1.5, 1);
+        g.heartPickup = null;
+      }
+    }
+  }
+
+  // Dying projectiles update
+  for (const dp of g.dyingProjectiles) {
+    dp.life--;
+    if (dp.life <= 0) {
+      for (let i = 0; i < 3; i++) addParticle(g, dp.pos.x, dp.pos.y, '#ffffff', 1.5, 0.5, 0.3);
+    }
+  }
+  g.dyingProjectiles = g.dyingProjectiles.filter(dp => dp.life > 0);
   if (g.gemNotifyTimer > 0) g.gemNotifyTimer--;
   if (g.waveAnnounceTimer > 0) g.waveAnnounceTimer--;
   if (g.screenFlashTimer > 0) g.screenFlashTimer--;
@@ -2601,6 +2679,29 @@ function killEnemy(g: GameData, e: Enemy, wasEvolving = false) {
         if (other === e || !other.alive) continue;
         if (dist(e.pos, other.pos) < 60) other.darkFlame = { remaining: 360, tickTimer: 60 };
       }
+    }
+
+    // Herald heart drop
+    const heartChance = g.coopState === 'playing' ? 0.55 : 0.35;
+    if (Math.random() < heartChance) {
+      g.heartPickup = {
+        pos: { x: e.pos.x, y: e.pos.y },
+        pulse: 0,
+        life: 480, // 8 seconds
+        collected: false,
+      };
+    }
+  }
+
+  // FIX 5: Clear all enemy projectiles when this enemy dies
+  for (const proj of g.projectiles) {
+    if (proj.alive && proj.type === 'enemy' && !proj.isParried) {
+      proj.alive = false;
+      g.dyingProjectiles.push({
+        pos: { x: proj.pos.x, y: proj.pos.y },
+        life: 12, // 0.2 seconds
+        maxLife: 12,
+      });
     }
   }
 }

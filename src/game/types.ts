@@ -382,4 +382,21 @@ export interface GameData {
   eclipseTimer: number;
   // Solus last shot time
   solusLastShotTime: number;
+  // Heart pickup
+  heartPickup: HeartPickup | null;
+  // Dying projectiles (flash + dissolve)
+  dyingProjectiles: DyingProjectile[];
+}
+
+export interface HeartPickup {
+  pos: Vec2;
+  pulse: number;
+  life: number;
+  collected: boolean;
+}
+
+export interface DyingProjectile {
+  pos: Vec2;
+  life: number;
+  maxLife: number;
 }

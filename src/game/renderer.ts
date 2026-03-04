@@ -1,4 +1,5 @@
-import { GameData, Enemy, Player, WeaponType, Projectile, UpgradeRarity } from './types';
+import { GameData, Enemy, Player, WeaponType, Projectile, UpgradeRarity, SolusPlayer } from './types';
+/* eslint-disable @typescript-eslint/no-unused-vars */
 
 const HERALD_NAMES: Record<number, string> = {
   1: 'THE CINDER HERALD', 2: 'THE GLACIAL HERALD', 3: 'THE STORM HERALD',
@@ -154,6 +155,62 @@ export function render(ctx: CanvasRenderingContext2D, g: GameData) {
   if (p.alive) {
     const visible = p.invincibleTimer <= 0 || Math.floor(p.invincibleTimer / 3) % 2 === 0;
     if (visible) drawPlayer(ctx, p);
+    // Name tag in co-op
+    if (g.coopState === 'playing') {
+      ctx.fillStyle = '#9b30ff'; ctx.font = '700 8px monospace'; ctx.textAlign = 'center';
+      ctx.fillText('UMBRA', Math.floor(p.pos.x), Math.floor(p.pos.y) - 16);
+    }
+  } else if (g.umbraCollapsed) {
+    // Draw collapsed Umbra
+    ctx.globalAlpha = 0.4 + Math.sin(Date.now() * 0.005) * 0.1;
+    drawPlayer(ctx, p);
+    ctx.globalAlpha = 1;
+    // Revive progress circle
+    if (g.umbraReviveProgress > 0) {
+      ctx.strokeStyle = '#ffd700'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(Math.floor(p.pos.x), Math.floor(p.pos.y), 20, -Math.PI / 2, -Math.PI / 2 + g.umbraReviveProgress * Math.PI * 2);
+      ctx.stroke();
+    }
+  }
+
+  // Draw Solus in co-op
+  if (g.coopState === 'playing' && g.solus) {
+    const s = g.solus;
+    // Afterimages
+    for (const ai of s.afterimages) {
+      ctx.globalAlpha = (ai.life / ai.maxLife) * 0.2;
+      drawSolus(ctx, s, ai.pos.x, ai.pos.y);
+      ctx.globalAlpha = 1;
+    }
+    if (s.alive) {
+      const visible = s.invincibleTimer <= 0 || Math.floor(s.invincibleTimer / 3) % 2 === 0;
+      if (visible) drawSolus(ctx, s);
+      // Martyr Shield visual
+      if (s.martyrShieldActive) {
+        ctx.strokeStyle = '#ffd700'; ctx.lineWidth = 2; ctx.shadowColor = '#ffd700'; ctx.shadowBlur = 8;
+        const pulse = 1 + Math.sin(Date.now() * 0.008) * 0.05;
+        ctx.beginPath(); ctx.arc(Math.floor(s.pos.x), Math.floor(s.pos.y), 18 * pulse, 0, Math.PI * 2); ctx.stroke();
+        ctx.shadowBlur = 0;
+      }
+      // Divine Reckoning aura
+      if (s.divineReckoningActive) {
+        ctx.globalAlpha = 0.2; ctx.fillStyle = '#ffd700';
+        ctx.beginPath(); ctx.arc(Math.floor(s.pos.x), Math.floor(s.pos.y), 60, 0, Math.PI * 2); ctx.fill();
+        ctx.globalAlpha = 1;
+      }
+      // Name tag
+      ctx.fillStyle = '#ffd700'; ctx.font = '700 8px monospace'; ctx.textAlign = 'center';
+      ctx.fillText('SOLUS', Math.floor(s.pos.x), Math.floor(s.pos.y) - 16);
+    } else if (s.collapsed) {
+      ctx.globalAlpha = 0.4 + Math.sin(Date.now() * 0.005) * 0.1;
+      drawSolus(ctx, s);
+      ctx.globalAlpha = 1;
+      if (s.reviveProgress > 0) {
+        ctx.strokeStyle = '#9b30ff'; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(Math.floor(s.pos.x), Math.floor(s.pos.y), 20, -Math.PI / 2, -Math.PI / 2 + s.reviveProgress * Math.PI * 2);
+        ctx.stroke();
+      }
+    }
   }
 
   // Parry flash
@@ -507,6 +564,14 @@ function drawProjectile(ctx: CanvasRenderingContext2D, proj: Projectile) {
     ctx.shadowBlur = 0; return;
   }
 
+  if (proj.type === 'holy') {
+    ctx.fillStyle = '#ffffff'; ctx.shadowColor = '#ffd700'; ctx.shadowBlur = 10;
+    ctx.beginPath(); ctx.arc(px, py, 4, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#ffd700'; ctx.shadowBlur = 0;
+    ctx.beginPath(); ctx.arc(px, py, 2, 0, Math.PI * 2); ctx.fill();
+    return;
+  }
+
   if (proj.type === 'shadow') {
     ctx.fillStyle = '#6600bb'; ctx.shadowColor = '#aa44ff'; ctx.shadowBlur = 10;
     ctx.beginPath(); ctx.arc(px, py, 4, 0, Math.PI * 2); ctx.fill();
@@ -825,6 +890,74 @@ function drawPlayer(ctx: CanvasRenderingContext2D, p: Player, overrideX?: number
   ctx.shadowBlur = p.animState === 'attack' ? 8 : 4;
   ctx.fillRect(6 + bracerExtend, -3 + breathOffset, 5, 6); ctx.shadowBlur = 0;
   ctx.fillStyle = '#2e2e50'; ctx.fillRect(-5, 3 + breathOffset, 10, 1);
+  ctx.restore();
+}
+
+function drawSolus(ctx: CanvasRenderingContext2D, s: SolusPlayer, overrideX?: number, overrideY?: number) {
+  const posX = overrideX ?? s.pos.x;
+  const posY = overrideY ?? s.pos.y;
+  ctx.save(); ctx.translate(Math.floor(posX), Math.floor(posY)); ctx.rotate(s.angle);
+
+  if (s.flashTimer > 0) { ctx.fillStyle = '#ffffff'; ctx.fillRect(-10, -10, 20, 20); ctx.restore(); return; }
+  if (s.goldFlashTimer > 0 && s.goldFlashTimer > 8) {
+    ctx.fillStyle = '#ffd700'; ctx.shadowColor = '#ffd700'; ctx.shadowBlur = 8;
+    ctx.fillRect(-10, -10, 20, 20); ctx.shadowBlur = 0; ctx.restore(); return;
+  }
+
+  const breathOffset = s.animState === 'idle' ? Math.sin(s.animFrame * (Math.PI * 2 / 3)) * 0.5 : 0;
+  const capeShift = s.animState === 'walk' ? Math.sin(s.animFrame * Math.PI / 2) * 2 : Math.sin(s.animFrame * Math.PI * 2 / 3) * 0.5;
+
+  // Divine Reckoning glow
+  if (s.divineReckoningActive) {
+    ctx.shadowColor = '#ffd700'; ctx.shadowBlur = 20;
+    ctx.fillStyle = 'rgba(255,221,68,0.2)';
+    ctx.beginPath(); ctx.arc(0, 0, 14, 0, Math.PI * 2); ctx.fill(); ctx.shadowBlur = 0;
+  }
+
+  // Cape - white/silver, torn
+  ctx.fillStyle = s.divineReckoningActive ? '#ffffdd' : '#e8e8ff';
+  ctx.fillRect(-9, -2, 4, (10 + capeShift));
+  ctx.fillRect(-7, (6 + capeShift), 3, 2);
+
+  // Body - silver plate
+  ctx.fillStyle = '#d0d0e0'; ctx.fillRect(-7, -7 + breathOffset, 14, 14);
+  ctx.fillStyle = '#a0a0b8';
+  ctx.fillRect(-7, -7 + breathOffset, 1, 14); ctx.fillRect(6, -7 + breathOffset, 1, 14);
+  ctx.fillRect(-7, -7 + breathOffset, 14, 1); ctx.fillRect(-7, 6 + breathOffset, 14, 1);
+  // Edge highlights
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(-6, -6 + breathOffset, 1, 1); ctx.fillRect(5, -6 + breathOffset, 1, 1);
+
+  // Helmet - silver crowned
+  ctx.fillStyle = '#a0a0b8'; ctx.fillRect(-5, -10 + breathOffset, 10, 6);
+  ctx.fillStyle = '#c0c0d0';
+  ctx.fillRect(-5, -12 + breathOffset, 2, 3); ctx.fillRect(-1, -13 + breathOffset, 2, 4); ctx.fillRect(3, -12 + breathOffset, 2, 3);
+
+  // Eyes - golden
+  ctx.fillStyle = '#ffdd44'; ctx.shadowColor = '#ffdd44';
+  ctx.shadowBlur = s.divineReckoningActive ? 12 : 6;
+  ctx.fillRect(3, -7 + breathOffset, 3, 2); ctx.fillRect(3, -4 + breathOffset, 3, 2);
+  ctx.shadowBlur = 0;
+
+  // Belt
+  ctx.fillStyle = '#8888aa'; ctx.fillRect(-6, 1 + breathOffset, 12, 2);
+
+  // Radiant Gauntlet - LEFT arm (mirrored from Umbra)
+  const bracerExtend = s.animState === 'attack' ? 4 : 0;
+  ctx.fillStyle = s.divineReckoningActive ? '#ffffff' : '#fff5aa';
+  ctx.shadowColor = '#ffd700'; ctx.shadowBlur = s.animState === 'attack' ? 10 : 5;
+  ctx.fillRect(-11 - bracerExtend, -3 + breathOffset, 5, 6); ctx.shadowBlur = 0;
+
+  // Legs detail
+  ctx.fillStyle = '#a0a0b8'; ctx.fillRect(-5, 3 + breathOffset, 10, 1);
+
+  // Light particles drifting upward
+  if (Math.random() < 0.3) {
+    ctx.fillStyle = '#ffd700'; ctx.globalAlpha = 0.4;
+    ctx.fillRect((Math.random() - 0.5) * 12, -10 - Math.random() * 6, 1, 1);
+    ctx.globalAlpha = 1;
+  }
+
   ctx.restore();
 }
 

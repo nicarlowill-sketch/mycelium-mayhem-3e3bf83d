@@ -1,5 +1,5 @@
 import { useRef, useEffect, useCallback, useState } from 'react';
-import { createGame, update, startGame, setWeapon, activateDash, activateUmbraMode, selectUpgrade, enableCoop, updateSolus, activateSolusDash } from '@/game/engine';
+import { createGame, update, updateClient, applyWorldState, startGame, setWeapon, activateDash, activateUmbraMode, selectUpgrade, enableCoop, updateSolus, activateSolusDash } from '@/game/engine';
 import { render } from '@/game/renderer';
 import { resumeAudio, playSoundEvent } from '@/game/audio';
 import { GameData, WeaponType } from '@/game/types';
@@ -61,6 +61,8 @@ const GameCanvas = () => {
     const g = gameRef.current;
     if (!g) return;
     resumeAudio();
+    // Mark client mode so engine skips simulation
+    g.isClientMode = !multiplayer.isHost;
     enableCoop(g);
     startGame(g);
     setShowLobby(false);
@@ -144,14 +146,69 @@ const GameCanvas = () => {
     let running = true;
     const loop = () => {
       if (!running) return;
-      update(g, performance.now());
 
-      // Multiplayer sync & Solus update
-      if (multiplayer.isMultiplayer) {
+      const isClient = multiplayer.isMultiplayer && !multiplayer.isHost;
+
+      if (isClient) {
+        // CLIENT: Apply host world state, then run visual-only update
+        if (multiplayer.worldState) {
+          applyWorldState(g, multiplayer.worldState);
+        }
+
+        // Run local Solus movement for responsiveness
+        if (g.coopState === 'playing' && g.solus && g.state === 'playing') {
+          updateSolus(g, {
+            keys: g.keys,
+            mousePos: g.mousePos,
+            mouseDown: g.mouseDown,
+            abilityQ: !!g.keys['q'],
+            abilityE: !!g.keys['e'],
+            ultimatePressed: !!g.keys['f'],
+          });
+        }
+
+        // Visual-only update (particles, camera, popups, screen shake)
+        updateClient(g, performance.now());
+
+        // Send inputs to host
+        multiplayer.sendInput({
+          keys: { ...g.keys },
+          mousePos: { x: g.mousePos.x + g.camera.x, y: g.mousePos.y + g.camera.y },
+          mouseDown: g.mouseDown,
+          dashPressed: !!g.keys[' '],
+          ultimatePressed: !!g.keys['f'],
+          abilityQ: !!g.keys['q'],
+          abilityE: !!g.keys['e'],
+        });
+
+        // Send local Solus state back to host for rendering
+        if (g.solus) {
+          multiplayer.sendPlayerState({
+            pos: g.solus.pos, vel: g.solus.vel, angle: g.solus.angle,
+            hp: g.solus.hp, maxHp: g.solus.maxHp, alive: g.solus.alive,
+            animState: g.solus.animState, animFrame: g.solus.animFrame,
+            activeWeapon: 'shadow', isDashing: g.solus.isDashing,
+            umbraMode: false, conviction: g.solus.conviction,
+            radiantBurstCooldown: g.solus.radiantBurstCooldown,
+            martyrShieldCooldown: g.solus.martyrShieldCooldown,
+            martyrShieldActive: g.solus.martyrShieldActive,
+            divineReckoningActive: g.solus.divineReckoningActive,
+            divineReckoningTimer: g.solus.divineReckoningTimer,
+            collapsed: g.solus.collapsed,
+            reviveProgress: g.solus.reviveProgress,
+            revivesRemaining: g.solus.revivesRemaining,
+          });
+        }
+
         multiplayer.update();
+      } else {
+        // HOST or SOLO: Full simulation
+        update(g, performance.now());
 
-        if (multiplayer.isHost) {
-          // Host: apply remote client input to Solus
+        if (multiplayer.isMultiplayer && multiplayer.isHost) {
+          multiplayer.update();
+
+          // Apply remote client input to Solus
           if (g.coopState === 'playing' && g.solus && g.state === 'playing') {
             const ri = multiplayer.remoteInput;
             if (ri) {
@@ -165,7 +222,8 @@ const GameCanvas = () => {
               });
             }
           }
-          // Send world state to client
+
+          // Broadcast world state to client
           if (g.solus) {
             multiplayer.sendWorldState({
               enemies: g.enemies.map(e => ({
@@ -182,6 +240,7 @@ const GameCanvas = () => {
               })),
               wave: g.wave,
               score: g.score,
+              gameState: g.state,
               hostPlayer: {
                 pos: g.player.pos, vel: g.player.vel, angle: g.player.angle,
                 hp: g.player.hp, maxHp: g.player.maxHp, alive: g.player.alive,
@@ -197,28 +256,17 @@ const GameCanvas = () => {
               floorHazards: g.floorHazards.map(h => ({ pos: h.pos, radius: h.radius, type: h.type })),
             });
           }
-        } else {
-          // Client: send local inputs to host
-          multiplayer.sendInput({
-            keys: { ...g.keys },
-            mousePos: { x: g.mousePos.x + g.camera.x, y: g.mousePos.y + g.camera.y },
+        } else if (g.coopState === 'playing' && g.solus && g.state === 'playing') {
+          // Local co-op (same machine)
+          updateSolus(g, {
+            keys: g.keys,
+            mousePos: g.mousePos,
             mouseDown: g.mouseDown,
-            dashPressed: !!g.keys['q'],
-            ultimatePressed: !!g.keys['f'],
             abilityQ: !!g.keys['q'],
             abilityE: !!g.keys['e'],
+            ultimatePressed: !!g.keys['f'],
           });
         }
-      } else if (g.coopState === 'playing' && g.solus && g.state === 'playing') {
-        // Local co-op (same machine)
-        updateSolus(g, {
-          keys: g.keys,
-          mousePos: g.mousePos,
-          mouseDown: g.mouseDown,
-          abilityQ: !!g.keys['q'],
-          abilityE: !!g.keys['e'],
-          ultimatePressed: !!g.keys['f'],
-        });
       }
 
       for (const evt of g.soundEvents) playSoundEvent(evt);

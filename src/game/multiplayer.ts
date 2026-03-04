@@ -54,6 +54,7 @@ export interface WorldStateSync {
   }>;
   wave: number;
   score: number;
+  gameState: string;
   hostPlayer: RemotePlayerState;
   gemPickup: { pos: Vec2; gemType: WeaponType } | null;
   floorHazards: Array<{ pos: Vec2; radius: number; type: string }>;

@@ -610,6 +610,70 @@ export function updateSolus(g: GameData, input: { keys: Record<string, boolean>;
   }
 }
 
+export function updateSolusLocalMovement(g: GameData, input: { keys: Record<string, boolean>; mousePos: Vec2 }) {
+  const s = g.solus;
+  if (!s || !s.alive) return;
+
+  if (s.isDashing) {
+    s.dashTimer--;
+    const dashSpd = DASH_SPEED;
+    s.pos.x += s.dashDir.x * dashSpd;
+    s.pos.y += s.dashDir.y * dashSpd;
+    if (s.dashTimer % 2 === 0) {
+      s.afterimages.push({ pos: { x: s.pos.x, y: s.pos.y }, angle: s.angle, life: 18, maxLife: 18 });
+    }
+    if (s.dashTimer <= 0) {
+      s.isDashing = false;
+      for (let i = 0; i < 6; i++) addParticle(g, s.pos.x, s.pos.y, '#ffd700', 2, 1, 0.5);
+    }
+  } else {
+    let dx = 0, dy = 0;
+    if (input.keys['w']) dy -= 1;
+    if (input.keys['s']) dy += 1;
+    if (input.keys['a']) dx -= 1;
+    if (input.keys['d']) dx += 1;
+
+    const effectiveSpeed = PLAYER_SPEED * s.speedMultiplier;
+    if (dx !== 0 || dy !== 0) {
+      const len = Math.sqrt(dx * dx + dy * dy);
+      dx /= len; dy /= len;
+      s.vel.x += (dx * effectiveSpeed - s.vel.x) * PLAYER_ACCEL;
+      s.vel.y += (dy * effectiveSpeed - s.vel.y) * PLAYER_ACCEL;
+    } else {
+      s.vel.x *= PLAYER_DECEL;
+      s.vel.y *= PLAYER_DECEL;
+    }
+
+    s.pos.x += s.vel.x;
+    s.pos.y += s.vel.y;
+  }
+
+  const brd = g.borderSize + 10;
+  s.pos.x = Math.max(brd, Math.min(g.arenaWidth - brd, s.pos.x));
+  s.pos.y = Math.max(brd, Math.min(g.arenaHeight - brd, s.pos.y));
+
+  const worldMouseX = input.mousePos.x + g.camera.x;
+  const worldMouseY = input.mousePos.y + g.camera.y;
+  s.angle = Math.atan2(worldMouseY - s.pos.y, worldMouseX - s.pos.x);
+
+  s.animTick++;
+  const moving = Math.abs(s.vel.x) > 0.3 || Math.abs(s.vel.y) > 0.3;
+  s.animState = moving ? 'walk' : 'idle';
+  const frameRate = s.animState === 'idle' ? 15 : 8;
+  if (s.animTick >= frameRate) {
+    s.animTick = 0;
+    s.animFrame = (s.animFrame + 1) % 4;
+  }
+
+  if (s.invincibleTimer > 0) s.invincibleTimer--;
+  if (s.flashTimer > 0) s.flashTimer--;
+  if (s.goldFlashTimer > 0) s.goldFlashTimer--;
+  if (s.dashCooldown > 0) s.dashCooldown--;
+
+  for (const ai of s.afterimages) ai.life--;
+  s.afterimages = s.afterimages.filter(ai => ai.life > 0);
+}
+
 // Co-op enemy scaling
 export function getCoopHpMultiplier(g: GameData): number {
   return g.coopState === 'playing' ? 1.5 : 1;

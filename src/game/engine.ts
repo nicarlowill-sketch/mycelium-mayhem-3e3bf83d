@@ -2075,18 +2075,10 @@ export function applyWorldState(g: GameData, ws: import('./multiplayer').WorldSt
   g.umbraReviveProgress = hp.reviveProgress;
   g.umbraRevivesRemaining = hp.revivesRemaining;
 
-  // Wave / score / game state
+  // Wave / score / game state are host-authoritative
   g.wave = ws.wave;
   g.score = ws.score;
-  // Sync game state from host (playing, waveClear, gameOver, bossIntro, etc.)
-  if (ws.gameState === 'gameOver' || ws.gameState === 'waveClear' || ws.gameState === 'bossIntro') {
-    if (g.state !== ws.gameState) {
-      g.state = ws.gameState as any;
-      if (ws.gameState === 'waveClear') g.waveClearTimer = 180;
-    }
-  } else if (ws.gameState === 'playing' && g.state !== 'playing') {
-    g.state = 'playing';
-  }
+  g.state = ws.gameState as any;
 
   // Gem pickup
   if (ws.gemPickup) {

@@ -177,25 +177,6 @@ const GameCanvas = () => {
           abilityE: !!g.keys['e'],
         });
 
-        // Send local Solus state back to host for rendering
-        if (g.solus) {
-          multiplayer.sendPlayerState({
-            pos: g.solus.pos, vel: g.solus.vel, angle: g.solus.angle,
-            hp: g.solus.hp, maxHp: g.solus.maxHp, alive: g.solus.alive,
-            animState: g.solus.animState, animFrame: g.solus.animFrame,
-            activeWeapon: 'shadow', isDashing: g.solus.isDashing,
-            umbraMode: false, conviction: g.solus.conviction,
-            radiantBurstCooldown: g.solus.radiantBurstCooldown,
-            martyrShieldCooldown: g.solus.martyrShieldCooldown,
-            martyrShieldActive: g.solus.martyrShieldActive,
-            divineReckoningActive: g.solus.divineReckoningActive,
-            divineReckoningTimer: g.solus.divineReckoningTimer,
-            collapsed: g.solus.collapsed,
-            reviveProgress: g.solus.reviveProgress,
-            revivesRemaining: g.solus.revivesRemaining,
-          });
-        }
-
         multiplayer.update();
       } else {
         // HOST or SOLO: Full simulation

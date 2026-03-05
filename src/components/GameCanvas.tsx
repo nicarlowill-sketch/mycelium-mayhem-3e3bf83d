@@ -155,15 +155,11 @@ const GameCanvas = () => {
           applyWorldState(g, multiplayer.worldState);
         }
 
-        // Run local Solus movement for responsiveness
+        // Run local Solus movement only for responsiveness
         if (g.coopState === 'playing' && g.solus && g.state === 'playing') {
-          updateSolus(g, {
+          updateSolusLocalMovement(g, {
             keys: g.keys,
             mousePos: g.mousePos,
-            mouseDown: g.mouseDown,
-            abilityQ: !!g.keys['q'],
-            abilityE: !!g.keys['e'],
-            ultimatePressed: !!g.keys['f'],
           });
         }
 

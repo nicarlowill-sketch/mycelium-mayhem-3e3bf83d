@@ -2021,13 +2021,7 @@ export function updateClient(g: GameData, now: number) {
   g.camera.x = Math.max(0, Math.min(g.arenaWidth - g.width, g.camera.x));
   g.camera.y = Math.max(0, Math.min(g.arenaHeight - g.height, g.camera.y));
 
-  // Wave clear (mirrored from host via worldState)
-  if (g.state === 'waveClear') {
-    g.waveClearTimer--;
-    if (g.waveClearTimer <= 0) {
-      g.state = 'playing';
-    }
-  }
+  // Wave progression is host-authoritative; client mirrors state via applyWorldState.
 }
 
 // Apply host world state to client game data

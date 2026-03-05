@@ -1,5 +1,5 @@
 import { useRef, useEffect, useCallback, useState } from 'react';
-import { createGame, update, updateClient, applyWorldState, startGame, setWeapon, activateDash, activateUmbraMode, selectUpgrade, enableCoop, updateSolus, activateSolusDash } from '@/game/engine';
+import { createGame, update, updateClient, applyWorldState, startGame, setWeapon, activateDash, activateUmbraMode, selectUpgrade, enableCoop, updateSolus, updateSolusLocalMovement, activateSolusDash } from '@/game/engine';
 import { render } from '@/game/renderer';
 import { resumeAudio, playSoundEvent } from '@/game/audio';
 import { GameData, WeaponType } from '@/game/types';

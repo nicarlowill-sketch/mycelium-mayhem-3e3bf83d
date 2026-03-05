@@ -1008,6 +1008,11 @@ function generateUpgradeCards(p: Player): UpgradeCard[] {
 }
 
 export function update(g: GameData, now: number) {
+  if (g.isClientMode) {
+    updateClient(g, now);
+    return;
+  }
+
   g.startPulse += 0.02;
   g.soundEvents = [];
   g.frameTick++;

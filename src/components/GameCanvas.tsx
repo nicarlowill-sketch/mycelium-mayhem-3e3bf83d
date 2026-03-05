@@ -1,5 +1,5 @@
 import { useRef, useEffect, useCallback, useState } from 'react';
-import { createGame, update, updateClient, applyWorldState, startGame, setWeapon, activateDash, activateUmbraMode, selectUpgrade, enableCoop, updateSolus, activateSolusDash } from '@/game/engine';
+import { createGame, update, updateClient, applyWorldState, startGame, setWeapon, activateDash, activateUmbraMode, selectUpgrade, enableCoop, updateSolus, updateSolusLocalMovement, activateSolusDash } from '@/game/engine';
 import { render } from '@/game/renderer';
 import { resumeAudio, playSoundEvent } from '@/game/audio';
 import { GameData, WeaponType } from '@/game/types';
@@ -155,15 +155,11 @@ const GameCanvas = () => {
           applyWorldState(g, multiplayer.worldState);
         }
 
-        // Run local Solus movement for responsiveness
+        // Run local Solus movement only for responsiveness
         if (g.coopState === 'playing' && g.solus && g.state === 'playing') {
-          updateSolus(g, {
+          updateSolusLocalMovement(g, {
             keys: g.keys,
             mousePos: g.mousePos,
-            mouseDown: g.mouseDown,
-            abilityQ: !!g.keys['q'],
-            abilityE: !!g.keys['e'],
-            ultimatePressed: !!g.keys['f'],
           });
         }
 
@@ -180,25 +176,6 @@ const GameCanvas = () => {
           abilityQ: !!g.keys['q'],
           abilityE: !!g.keys['e'],
         });
-
-        // Send local Solus state back to host for rendering
-        if (g.solus) {
-          multiplayer.sendPlayerState({
-            pos: g.solus.pos, vel: g.solus.vel, angle: g.solus.angle,
-            hp: g.solus.hp, maxHp: g.solus.maxHp, alive: g.solus.alive,
-            animState: g.solus.animState, animFrame: g.solus.animFrame,
-            activeWeapon: 'shadow', isDashing: g.solus.isDashing,
-            umbraMode: false, conviction: g.solus.conviction,
-            radiantBurstCooldown: g.solus.radiantBurstCooldown,
-            martyrShieldCooldown: g.solus.martyrShieldCooldown,
-            martyrShieldActive: g.solus.martyrShieldActive,
-            divineReckoningActive: g.solus.divineReckoningActive,
-            divineReckoningTimer: g.solus.divineReckoningTimer,
-            collapsed: g.solus.collapsed,
-            reviveProgress: g.solus.reviveProgress,
-            revivesRemaining: g.solus.revivesRemaining,
-          });
-        }
 
         multiplayer.update();
       } else {
